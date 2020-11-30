@@ -1,0 +1,8 @@
+{
+  "id": "advanced-navigation-obsidian",
+  "name": "Advanced Navigation",
+  "description": "Navigation commands including leader-key support",
+  "isDesktopOnly": false,
+  "version": "0.0.1",
+  "js": "main.js"
+}
