@@ -1,7 +1,7 @@
 {
-  "id": "advanced-navigation-obsidian",
-  "name": "Advanced Navigation",
-  "description": "Navigation commands including leader-key support",
+  "id": "leader-hotkeys-obsidian",
+  "name": "Leader Hotkeys",
+  "description": "Add leader hotkey support to any command (like tmux or vim)",
   "isDesktopOnly": false,
   "version": "0.0.1",
   "js": "main.js"
