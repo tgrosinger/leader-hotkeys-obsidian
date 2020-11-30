@@ -1,183 +1,228 @@
-import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
-import { head, filter, compact } from 'lodash';
+import { App, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 
-export default class AdvancedNavigationPlugin extends Plugin {
-  public async onload(): Promise<void> {
-    this.addCommand({
-      id: 'get-layout',
-      name: 'Get Layout',
-      callback: () => {
-        console.log(this.app.workspace.activeLeaf);
-      },
-    });
-
-    this.addCommand({
-      id: 'focus-up',
-      name: 'Focus up',
-      callback: () => {
-        (this.app as any).commands.executeCommandById('editor:focus-top');
-      },
-    });
-    this.addCommand({
-      id: 'focus-down',
-      name: 'Focus down',
-      callback: () => {
-        (this.app as any).commands.executeCommandById('editor:focus-bottom');
-      },
-    });
-    this.addCommand({
-      id: 'focus-left',
-      name: 'Focus left',
-      callback: () => {
-        (this.app as any).commands.executeCommandById('editor:focus-left');
-      },
-    });
-    this.addCommand({
-      id: 'focus-right',
-      name: 'Focus right',
-      callback: () => {
-        (this.app as any).commands.executeCommandById('editor:focus-right');
-
-        /*
-        const mainLayout = this.app.workspace.getLayout().main;
-        const enhancedMainLayout = newEnhancedViewState(mainLayout, undefined);
-        if (enhancedMainLayout.viewType === 'leaf') {
-          throw new Error('Unexpected leaf at main layout root');
-        }
-        console.log(enhancedMainLayout);
-        const activeLeaf = enhancedMainLayout.getActive();
-        console.log(activeLeaf.id);
-        */
-
-        // But should also think about:
-        //   - moving into sidebars
-        //   - switching tabs in sidebars
-        //   - horizontal and vertical splits in main and sidebars
-        // don't forget to filter out empty
-      },
-    });
-  }
+interface Command {
+  name: string;
+  id: string;
 }
 
-const newEnhancedViewState = (
-  viewState: any,
-  parent: SplitView | undefined,
-): SplitView | EditorView => {
-  switch (viewState.type) {
-    case 'split':
-      return new SplitView(
-        viewState.id,
-        viewState.type,
-        viewState.direction,
-        viewState.children,
-        undefined,
-      );
-    case 'leaf':
-      return new EditorView(
-        viewState.id,
-        viewState.type,
-        viewState.active || false,
-        viewState.pinned || false,
-        viewState.group,
-        viewState.state,
-        parent,
-      );
-    default:
-      throw new Error('Unexpected leaf type: ' + viewState.type);
-  }
-};
+interface Hotkey {
+  key: string;
+  commandID: string;
+}
+export default class LeaderHotkeysPlugin extends Plugin {
+  private leaderPending: boolean;
+  private cmEditors: CodeMirror.Editor[];
 
-class SplitView {
-  public id: string;
-  public viewType: 'split';
-  public direction: string;
-  public children: (SplitView | EditorView)[];
-  public parent: SplitView | undefined;
+  public hotkeys: Hotkey[];
 
-  constructor(
-    id: string,
-    viewType: string,
-    direction: string,
-    children: any[],
-    parent: SplitView | undefined,
-  ) {
-    if (viewType !== 'split') {
-      throw new Error('unexpected type in SplitView: ' + viewType);
-    }
-    this.viewType = 'split';
+  public async onload(): Promise<void> {
+    this.hotkeys = [];
 
-    this.id = id;
-    this.direction = direction;
-    this.children = children.map((child: any) => {
-      return newEnhancedViewState(child, this);
-    });
-    this.parent = parent;
-  }
-
-  public getActive = (): EditorView | undefined => {
-    return head(
-      compact(
-        this.children.map((child) => {
-          if (child.viewType === 'leaf') {
-            return child.active ? child : undefined;
-          } else {
-            return child.getActive();
-          }
-        }),
-      ),
+    this.cmEditors = [];
+    this.registerEvent(
+      this.app.on('codemirror', (cm: CodeMirror.Editor) => {
+        this.cmEditors.push(cm);
+        cm.on('keydown', this.handleKeyDown);
+      }),
     );
+
+    this.addCommand({
+      id: 'leader',
+      name: 'Leader key',
+      hotkeys: [
+        {
+          modifiers: ['Mod'],
+          key: 'b',
+        },
+      ],
+      callback: () => {
+        console.debug('Leader pressed...');
+        this.leaderPending = true;
+      },
+    });
+
+    this.addSettingTab(new LeaderPluginSettingsTab(this.app, this));
+  }
+
+  public onunload(): void {
+    this.cmEditors.forEach((cm) => {
+      cm.off('keydown', this.handleKeyDown);
+    });
+  }
+
+  private readonly handleKeyDown = (
+    cm: CodeMirror.Editor,
+    event: KeyboardEvent,
+  ): void => {
+    if (!this.leaderPending) {
+      return;
+    }
+
+    switch (event.key) {
+      case 'j':
+        (this.app as any).commands.executeCommandById('editor:focus-bottom');
+        break;
+      case 'k':
+        (this.app as any).commands.executeCommandById('editor:focus-top');
+        break;
+      case 'h':
+        (this.app as any).commands.executeCommandById('editor:focus-left');
+        break;
+      case 'l':
+        (this.app as any).commands.executeCommandById('editor:focus-right');
+        break;
+      default:
+        console.debug('cancelling leader');
+        return;
+    }
+
+    this.leaderPending = false;
+    event.preventDefault();
   };
 }
 
-class EditorView {
-  public id: string;
-  public viewType: 'leaf';
-  public active: boolean;
-  public pinned: boolean;
-  public group?: string;
-  public state: LeafState;
-  public parent: SplitView;
+class LeaderPluginSettingsTab extends PluginSettingTab {
+  private readonly plugin: LeaderHotkeysPlugin;
+  private readonly commands: Command[];
+  private readonly currentLeader: string;
 
-  constructor(
-    id: string,
-    viewType: string,
-    active: boolean,
-    pinned: boolean,
-    group: string | undefined,
-    state: any,
-    parent: SplitView,
-  ) {
-    if (viewType !== 'leaf') {
-      throw new Error('unexpected type in EditorView: ' + viewType);
-    }
-    this.viewType = 'leaf';
-
-    this.id = id;
-    this.active = active;
-    this.pinned = pinned;
-    this.group = group;
-    this.state = new LeafState(state);
-    this.parent = parent;
+  constructor(app: App, plugin: LeaderHotkeysPlugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+    this.commands = this.generateCommandList(app);
+    this.currentLeader = this.lookupCurrentLeader(app);
   }
-}
 
-class LeafState {
-  private leafType: string;
-  private file: string;
-  private mode: 'source' | 'preview' | 'live';
+  private lookupCurrentLeader = (app: App): string => {
+    for (const [key, value] of Object.entries((app as any).commands.commands)) {
+      if (key !== 'leader-hotkeys-obsidian:leader') {
+        continue;
+      }
 
-  constructor(state: any) {
-    if ('type' in state) {
-      this.leafType = state.type;
+      return value.hotkeys
+        .map(
+          (hotkey: any): string =>
+            hotkey.modifiers.join('+') + '+' + hotkey.key,
+        )
+        .join(' or ');
     }
-    if ('state' in state) {
-      const subState = state.state;
-      if ('file' in subState) {
-        this.file = subState.file;
-      }
-      if ('mode' in subState) {
-        this.mode = subState.mode;
+  };
+
+  private generateCommandList = (app: App): Command[] => {
+    const commands: Command[] = [];
+    for (const [key, value] of Object.entries((app as any).commands.commands)) {
+      commands.push({ name: value.name, id: value.id });
+    }
+    return commands;
+  };
+
+  private validateNewHotkey = (value: string): boolean => {
+    console.log(`Validating value: '${value}'`);
+    if (value.length !== 1) {
+      new Notice('Leader hotkeys may only be a single letter');
+      return false;
+    }
+
+    for (let i = 0; i < this.plugin.hotkeys.length; i++) {
+      if (this.plugin.hotkeys[i].key === value) {
+        new Notice(`Leader hotkey '${value}' is already in use`);
+        return false;
       }
     }
+
+    return true;
+  };
+
+  public display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    containerEl.createEl('h2', { text: 'Leader Hotkeys Plugin - Settings' });
+
+    containerEl.createEl('p', {
+      text:
+        'The leader-hotkeys listed below are used by pressing a custom ' +
+        'hotkey (called the leader), then releasing and pressing the key ' +
+        'defined for a particular command. The leader hotkey can be ' +
+        'configured in the Hotkeys settings page, and is currently bound to.' +
+        this.currentLeader,
+    });
+
+    containerEl.createEl('h3', { text: 'Existing Hotkeys' });
+
+    const commands = [
+      ['h', 'editor:focus-left'],
+      ['j', 'editor:focus-bottom'],
+      ['k', 'editor:focus-top'],
+      ['l', 'editor:focus-right'],
+    ];
+
+    commands.map((command) => {
+      const [key, commandName] = command;
+
+      new Setting(containerEl)
+        .addExtraButton((button) => {
+          button
+            .setIcon('cross')
+            .setTooltip('Delete shortcut')
+            .onClick(() => {
+              console.log('should remove ' + commandName);
+            });
+          button.extraSettingsEl.addClass('leader-hotkeys-delete');
+        })
+        .addText((text) => {
+          text.setValue(key).onChange((newTextValue) => {
+            if (newTextValue === '') {
+              return;
+            }
+            const isValid = this.validateNewHotkey(newTextValue);
+            if (isValid) {
+              console.log(`updating hotkey for ${key} to ${newTextValue}`);
+            }
+          });
+          text.inputEl.addClass('leader-hotkeys-key');
+        })
+        .addDropdown((dropdown) => {
+          this.commands.forEach((command) => {
+            dropdown.addOption(command.id, command.name);
+          });
+          dropdown.setValue(commandName).onChange((newValue) => {
+            console.log(`updating command for ${key} to ${newValue}`);
+          });
+          dropdown.selectEl.addClass('leader-hotkeys-command');
+        });
+    });
+
+    containerEl.createEl('h3', { text: 'Create New Hotkey' });
+
+    new Setting(containerEl)
+      .addText((text) => {
+        text.setPlaceholder('a').onChange((newTextValue) => {
+          if (newTextValue === '') {
+            return;
+          }
+          const isValid = this.validateNewHotkey(newTextValue);
+          if (isValid) {
+            console.log(`storing temp value for new hotkey ${newTextValue}`);
+          }
+        });
+        text.inputEl.addClass('leader-hotkeys-key');
+      })
+      .addDropdown((dropdown) => {
+        dropdown.addOption('invalid-placeholder', 'Select a Command');
+        this.commands.forEach((command) => {
+          dropdown.addOption(command.id, command.name);
+        });
+        dropdown.onChange((newValue) => {
+          console.log(`storing temp value for new command ${newValue}`);
+        });
+        dropdown.selectEl.addClass('leader-hotkeys-command');
+      });
+
+    new Setting(containerEl).addButton((button) => {
+      button.setButtonText('Save New Hotkey').onClick(() => {
+        console.log('should store new hotkey');
+      });
+    });
   }
 }
