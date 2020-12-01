@@ -9,14 +9,26 @@ interface Hotkey {
   key: string;
   commandID: string;
 }
+
+interface Settings {
+  hotkeys: Hotkey[];
+}
+
+const defaultHotkeys: Hotkey[] = [
+  { key: 'h', commandID: 'editor:focus-left' },
+  { key: 'j', commandID: 'editor:focus-bottom' },
+  { key: 'k', commandID: 'editor:focus-top' },
+  { key: 'l', commandID: 'editor:focus-right' },
+];
+
 export default class LeaderHotkeysPlugin extends Plugin {
   private leaderPending: boolean;
   private cmEditors: CodeMirror.Editor[];
 
-  public hotkeys: Hotkey[];
+  public settings: Settings;
 
   public async onload(): Promise<void> {
-    this.hotkeys = [];
+    this.settings = (await this.loadData()) || { hotkeys: defaultHotkeys };
 
     this.cmEditors = [];
     this.registerEvent(
@@ -58,26 +70,23 @@ export default class LeaderHotkeysPlugin extends Plugin {
       return;
     }
 
-    switch (event.key) {
-      case 'j':
-        (this.app as any).commands.executeCommandById('editor:focus-bottom');
+    let commandFound = false;
+    for (let i = 0; i < this.settings.hotkeys.length; i++) {
+      if (this.settings.hotkeys[i].key === event.key) {
+        (this.app as any).commands.executeCommandById(
+          this.settings.hotkeys[i].commandID,
+        );
+        event.preventDefault();
+        commandFound = true;
         break;
-      case 'k':
-        (this.app as any).commands.executeCommandById('editor:focus-top');
-        break;
-      case 'h':
-        (this.app as any).commands.executeCommandById('editor:focus-left');
-        break;
-      case 'l':
-        (this.app as any).commands.executeCommandById('editor:focus-right');
-        break;
-      default:
-        console.debug('cancelling leader');
-        return;
+      }
+    }
+
+    if (!commandFound) {
+      console.debug('cancelling leader');
     }
 
     this.leaderPending = false;
-    event.preventDefault();
   };
 }
 
@@ -85,6 +94,9 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
   private readonly plugin: LeaderHotkeysPlugin;
   private readonly commands: Command[];
   private readonly currentLeader: string;
+
+  private tempNewHotkey: string;
+  private tempNewCommand: string;
 
   constructor(app: App, plugin: LeaderHotkeysPlugin) {
     super(app, plugin);
@@ -123,14 +135,70 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
       return false;
     }
 
-    for (let i = 0; i < this.plugin.hotkeys.length; i++) {
-      if (this.plugin.hotkeys[i].key === value) {
+    for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
+      if (this.plugin.settings.hotkeys[i].key === value) {
         new Notice(`Leader hotkey '${value}' is already in use`);
         return false;
       }
     }
 
     return true;
+  };
+
+  private deleteHotkeyFromSettings = (key: string) => {
+    for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
+      const hotkey = this.plugin.settings.hotkeys[i];
+      if (hotkey.key !== key) {
+        continue;
+      }
+
+      console.log(`Removing leader-hotkey ${key} at index ${i}`);
+      this.plugin.settings.hotkeys.splice(i, 1);
+    }
+    this.plugin.saveData(this.plugin.settings);
+  };
+
+  private updateHotkeyInSettings = (key: string, newKey: string) => {
+    for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
+      const hotkey = this.plugin.settings.hotkeys[i];
+      if (hotkey.key !== key) {
+        continue;
+      }
+
+      console.log(`Updating leader-hotkey ${key} at index ${i} to ${newKey}`);
+      hotkey.key = newKey;
+      break;
+    }
+    this.plugin.saveData(this.plugin.settings);
+  };
+
+  private updateHotkeyCommandInSettings = (key: string, newCommand: string) => {
+    for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
+      const hotkey = this.plugin.settings.hotkeys[i];
+      if (hotkey.key !== key) {
+        continue;
+      }
+
+      console.log(
+        `Updating leader-hotkey command ${key} at index ${i} to ${newCommand}`,
+      );
+      hotkey.commandID = newCommand;
+      break;
+    }
+    this.plugin.saveData(this.plugin.settings);
+  };
+
+  private storeNewHotkeyInSettings = () => {
+    console.log(
+      `Adding leader-hotkey command ${this.tempNewHotkey} to ${this.tempNewCommand}`,
+    );
+    this.plugin.settings.hotkeys.push({
+      key: this.tempNewHotkey,
+      commandID: this.tempNewCommand,
+    });
+    this.plugin.saveData(this.plugin.settings);
+    this.tempNewHotkey = '';
+    this.tempNewCommand = '';
   };
 
   public display(): void {
@@ -150,15 +218,8 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
     containerEl.createEl('h3', { text: 'Existing Hotkeys' });
 
-    const commands = [
-      ['h', 'editor:focus-left'],
-      ['j', 'editor:focus-bottom'],
-      ['k', 'editor:focus-top'],
-      ['l', 'editor:focus-right'],
-    ];
-
-    commands.map((command) => {
-      const [key, commandName] = command;
+    this.plugin.settings.hotkeys.forEach((command) => {
+      const { key, commandID } = command;
 
       new Setting(containerEl)
         .addExtraButton((button) => {
@@ -166,18 +227,19 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
             .setIcon('cross')
             .setTooltip('Delete shortcut')
             .onClick(() => {
-              console.log('should remove ' + commandName);
+              this.deleteHotkeyFromSettings(key);
+              this.display();
             });
           button.extraSettingsEl.addClass('leader-hotkeys-delete');
         })
         .addText((text) => {
-          text.setValue(key).onChange((newTextValue) => {
-            if (newTextValue === '') {
+          text.setValue(key).onChange((newKey) => {
+            if (newKey === '') {
               return;
             }
-            const isValid = this.validateNewHotkey(newTextValue);
+            const isValid = this.validateNewHotkey(newKey);
             if (isValid) {
-              console.log(`updating hotkey for ${key} to ${newTextValue}`);
+              this.updateHotkeyInSettings(key, newKey);
             }
           });
           text.inputEl.addClass('leader-hotkeys-key');
@@ -186,8 +248,8 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
           this.commands.forEach((command) => {
             dropdown.addOption(command.id, command.name);
           });
-          dropdown.setValue(commandName).onChange((newValue) => {
-            console.log(`updating command for ${key} to ${newValue}`);
+          dropdown.setValue(commandID).onChange((newCommand) => {
+            this.updateHotkeyCommandInSettings(key, newCommand);
           });
           dropdown.selectEl.addClass('leader-hotkeys-command');
         });
@@ -197,13 +259,13 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .addText((text) => {
-        text.setPlaceholder('a').onChange((newTextValue) => {
-          if (newTextValue === '') {
+        text.setPlaceholder('a').onChange((newKey) => {
+          if (newKey === '') {
             return;
           }
-          const isValid = this.validateNewHotkey(newTextValue);
+          const isValid = this.validateNewHotkey(newKey);
           if (isValid) {
-            console.log(`storing temp value for new hotkey ${newTextValue}`);
+            this.tempNewHotkey = newKey;
           }
         });
         text.inputEl.addClass('leader-hotkeys-key');
@@ -213,15 +275,19 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
         this.commands.forEach((command) => {
           dropdown.addOption(command.id, command.name);
         });
-        dropdown.onChange((newValue) => {
-          console.log(`storing temp value for new command ${newValue}`);
+        dropdown.onChange((newCommand) => {
+          this.tempNewCommand = newCommand;
         });
         dropdown.selectEl.addClass('leader-hotkeys-command');
       });
 
     new Setting(containerEl).addButton((button) => {
       button.setButtonText('Save New Hotkey').onClick(() => {
-        console.log('should store new hotkey');
+        const isValid = this.validateNewHotkey(this.tempNewHotkey);
+        if (isValid) {
+          this.storeNewHotkeyInSettings();
+          this.display();
+        }
       });
     });
   }
