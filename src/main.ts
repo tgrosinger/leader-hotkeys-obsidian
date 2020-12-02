@@ -227,8 +227,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
   private readonly lookupCurrentLeader = (app: App): string => {
     const customKeys = (app as any).hotkeyManager.customKeys;
     if ('leader-hotkeys-obsidian:leader' in customKeys) {
-      const hotkey = customKeys['leader-hotkeys-obsidian:leader'];
-      return hotkey
+      return customKeys['leader-hotkeys-obsidian:leader']
         .map(
           (hotkey: any): string =>
             hotkey.modifiers.join('+') + '+' + hotkey.key,
