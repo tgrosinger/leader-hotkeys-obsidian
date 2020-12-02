@@ -1,3 +1,4 @@
+import { settings } from 'cluster';
 import { App, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 
 interface Command {
@@ -93,7 +94,6 @@ export default class LeaderHotkeysPlugin extends Plugin {
 class LeaderPluginSettingsTab extends PluginSettingTab {
   private readonly plugin: LeaderHotkeysPlugin;
   private readonly commands: Command[];
-  private readonly currentLeader: string;
 
   private tempNewHotkey: string;
   private tempNewCommand: string;
@@ -102,12 +102,13 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
     this.commands = this.generateCommandList(app);
-    this.currentLeader = this.lookupCurrentLeader(app);
   }
 
   public display(): void {
     const { containerEl } = this;
     containerEl.empty();
+
+    const currentLeader = this.lookupCurrentLeader(this.app);
 
     containerEl.createEl('h2', { text: 'Leader Hotkeys Plugin - Settings' });
 
@@ -116,8 +117,9 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
         'The leader-hotkeys listed below are used by pressing a custom ' +
         'hotkey (called the leader), then releasing and pressing the key ' +
         'defined for a particular command. The leader hotkey can be ' +
-        'configured in the Hotkeys settings page, and is currently bound to.' +
-        this.currentLeader,
+        'configured in the Hotkeys settings page, and is currently bound to ' +
+        currentLeader +
+        '.',
     });
 
     containerEl.createEl('h3', { text: 'Existing Hotkeys' });
@@ -125,17 +127,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
     this.plugin.settings.hotkeys.forEach((configuredCommand) => {
       const { key, commandID } = configuredCommand;
 
-      new Setting(containerEl)
-        .addExtraButton((button) => {
-          button
-            .setIcon('cross')
-            .setTooltip('Delete shortcut')
-            .onClick(() => {
-              this.deleteHotkeyFromSettings(key);
-              this.display();
-            });
-          button.extraSettingsEl.addClass('leader-hotkeys-delete');
-        })
+      const setting = new Setting(containerEl)
         .addText((text) => {
           text.setValue(key).onChange((newKey) => {
             if (newKey === '') {
@@ -156,12 +148,35 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
             this.updateHotkeyCommandInSettings(key, newCommand);
           });
           dropdown.selectEl.addClass('leader-hotkeys-command');
+        })
+        .addExtraButton((button) => {
+          button
+            .setIcon('cross')
+            .setTooltip('Delete shortcut')
+            .onClick(() => {
+              this.deleteHotkeyFromSettings(key);
+              this.display();
+            });
+          button.extraSettingsEl.addClass('leader-hotkeys-delete');
         });
+
+      setting.infoEl.remove();
+      const settingControl = setting.settingEl.children[0];
+
+      const prependText = document.createElement('span');
+      prependText.addClass('leader-hotkeys-setting-prepend-text');
+      prependText.setText(`Use ${currentLeader} followed by`);
+      settingControl.insertBefore(prependText, settingControl.children[0]);
+
+      const appendText = document.createElement('span');
+      appendText.addClass('leader-hotkeys-setting-append-text');
+      appendText.setText(`to`);
+      settingControl.insertBefore(appendText, settingControl.children[2]);
     });
 
     containerEl.createEl('h3', { text: 'Create New Hotkey' });
 
-    new Setting(containerEl)
+    const newHotkeySetting = new Setting(containerEl)
       .addText((text) => {
         text.setPlaceholder('a').onChange((newKey) => {
           if (newKey === '') {
@@ -185,6 +200,19 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
         dropdown.selectEl.addClass('leader-hotkeys-command');
       });
 
+    newHotkeySetting.infoEl.remove();
+    const settingControl = newHotkeySetting.settingEl.children[0];
+
+    const prependText = document.createElement('span');
+    prependText.addClass('leader-hotkeys-setting-prepend-text');
+    prependText.setText(`Use ${currentLeader} followed by`);
+    settingControl.insertBefore(prependText, settingControl.children[0]);
+
+    const appendText = document.createElement('span');
+    appendText.addClass('leader-hotkeys-setting-append-text');
+    appendText.setText(`to`);
+    settingControl.insertBefore(appendText, settingControl.children[2]);
+
     new Setting(containerEl).addButton((button) => {
       button.setButtonText('Save New Hotkey').onClick(() => {
         const isValid = this.validateNewHotkey(this.tempNewHotkey);
@@ -197,18 +225,18 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
   }
 
   private readonly lookupCurrentLeader = (app: App): string => {
-    for (const [key, value] of Object.entries((app as any).commands.commands)) {
-      if (key !== 'leader-hotkeys-obsidian:leader') {
-        continue;
-      }
-
-      return value.hotkeys
+    const customKeys = (app as any).hotkeyManager.customKeys;
+    if ('leader-hotkeys-obsidian:leader' in customKeys) {
+      const hotkey = customKeys['leader-hotkeys-obsidian:leader'];
+      return hotkey
         .map(
           (hotkey: any): string =>
             hotkey.modifiers.join('+') + '+' + hotkey.key,
         )
         .join(' or ');
     }
+
+    return 'Mod+b';
   };
 
   private readonly generateCommandList = (app: App): Command[] => {
@@ -220,7 +248,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
   };
 
   private readonly validateNewHotkey = (value: string): boolean => {
-    console.log(`Validating value: '${value}'`);
+    console.debug(`Validating value: '${value}'`);
     if (value.length !== 1) {
       new Notice('Leader hotkeys may only be a single letter');
       return false;
@@ -243,7 +271,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
         continue;
       }
 
-      console.log(`Removing leader-hotkey ${key} at index ${i}`);
+      console.debug(`Removing leader-hotkey ${key} at index ${i}`);
       this.plugin.settings.hotkeys.splice(i, 1);
     }
     this.plugin.saveData(this.plugin.settings);
@@ -259,7 +287,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
         continue;
       }
 
-      console.log(`Updating leader-hotkey ${key} at index ${i} to ${newKey}`);
+      console.debug(`Updating leader-hotkey ${key} at index ${i} to ${newKey}`);
       hotkey.key = newKey;
       break;
     }
@@ -276,7 +304,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
         continue;
       }
 
-      console.log(
+      console.debug(
         `Updating leader-hotkey command ${key} at index ${i} to ${newCommand}`,
       );
       hotkey.commandID = newCommand;
@@ -286,7 +314,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
   };
 
   private readonly storeNewHotkeyInSettings = (): void => {
-    console.log(
+    console.debug(
       `Adding leader-hotkey command ${this.tempNewHotkey} to ${this.tempNewCommand}`,
     );
     this.plugin.settings.hotkeys.push({

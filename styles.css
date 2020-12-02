@@ -1,0 +1,12 @@
+.leader-hotkeys-key {
+  width: 35px;
+  padding: 10px !important;
+}
+
+.leader-hotkeys-setting-prepend-text {
+  padding-right: 10px;
+}
+
+.leader-hotkeys-setting-append-text {
+  padding: 0 10px;
+}
