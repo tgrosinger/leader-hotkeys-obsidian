@@ -115,9 +115,13 @@ export default class LeaderHotkeysPlugin extends Plugin {
 }
 
 class SetHotkeyModal extends Modal {
-  private currentLeader: string;
-  private redraw: () => void;
-  private setNewKey: (key: string, meta: boolean, shift: boolean) => void;
+  private readonly currentLeader: string;
+  private readonly redraw: () => void;
+  private readonly setNewKey: (
+    key: string,
+    meta: boolean,
+    shift: boolean,
+  ) => void;
 
   constructor(
     app: App,
@@ -131,8 +135,8 @@ class SetHotkeyModal extends Modal {
     this.setNewKey = setNewKey;
   }
 
-  public onOpen = () => {
-    let { contentEl } = this;
+  public onOpen = (): void => {
+    const { contentEl } = this;
 
     const introText = document.createElement('p');
     introText.setText(
@@ -144,15 +148,15 @@ class SetHotkeyModal extends Modal {
     document.addEventListener('keydown', this.handleKeyDown);
   };
 
-  public onClose = () => {
+  public onClose = (): void => {
     document.removeEventListener('keydown', this.handleKeyDown);
     this.redraw();
 
-    let { contentEl } = this;
+    const { contentEl } = this;
     contentEl.empty();
   };
 
-  private handleKeyDown = (event: KeyboardEvent) => {
+  private readonly handleKeyDown = (event: KeyboardEvent): void => {
     if (['Shift', 'Meta', 'Escape'].contains(event.key)) {
       return;
     }
@@ -253,7 +257,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
       const appendText = document.createElement('span');
       appendText.addClass('leader-hotkeys-setting-append-text');
-      appendText.setText(`to`);
+      appendText.setText('to');
       settingControl.insertBefore(appendText, settingControl.children[2]);
     });
 
@@ -307,7 +311,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
     const appendText = document.createElement('span');
     appendText.addClass('leader-hotkeys-setting-append-text');
-    appendText.setText(`to`);
+    appendText.setText('to');
     settingControl.insertBefore(appendText, settingControl.children[2]);
 
     new Setting(containerEl).addButton((button) => {
@@ -453,15 +457,18 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
   };
 }
 
-const newEmptyHotkey = (): Hotkey => {
-  return { key: '', shift: false, meta: false, commandID: '' };
-};
+const newEmptyHotkey = (): Hotkey => ({
+  key: '',
+  shift: false,
+  meta: false,
+  commandID: '',
+});
 
 const hotkeyToName = (hotkey: Hotkey): string => {
   if (hotkey === undefined || hotkey.key === '') {
     return '?';
   }
-  let keyToUse = (() => {
+  const keyToUse = (() => {
     switch (hotkey.key) {
       case 'ArrowRight':
         return '→';
