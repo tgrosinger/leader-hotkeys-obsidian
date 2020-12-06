@@ -1,6 +1,6 @@
 {
   "name": "leader-hotkeys-obsidian",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Add leader hotkey support to any command (like tmux or vim)",
   "main": "main.js",
   "scripts": {
