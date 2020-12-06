@@ -1,14 +1,22 @@
-import { settings } from 'cluster';
-import { App, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import {
+  App,
+  Modal,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+} from 'obsidian';
 
 interface Command {
   name: string;
   id: string;
 }
 
-interface Hotkey {
-  key: string;
-  commandID: string;
+class Hotkey {
+  public key: string;
+  public meta: boolean;
+  public shift: boolean;
+  public commandID: string;
 }
 
 interface Settings {
@@ -16,10 +24,10 @@ interface Settings {
 }
 
 const defaultHotkeys: Hotkey[] = [
-  { key: 'h', commandID: 'editor:focus-left' },
-  { key: 'j', commandID: 'editor:focus-bottom' },
-  { key: 'k', commandID: 'editor:focus-top' },
-  { key: 'l', commandID: 'editor:focus-right' },
+  { key: 'h', meta: false, shift: false, commandID: 'editor:focus-left' },
+  { key: 'j', meta: false, shift: false, commandID: 'editor:focus-bottom' },
+  { key: 'k', meta: false, shift: false, commandID: 'editor:focus-top' },
+  { key: 'l', meta: false, shift: false, commandID: 'editor:focus-right' },
 ];
 
 export default class LeaderHotkeysPlugin extends Plugin {
@@ -71,15 +79,30 @@ export default class LeaderHotkeysPlugin extends Plugin {
       return;
     }
 
+    if (event.key === 'Shift' || event.key === 'Meta') {
+      // Don't clear leaderPending for a meta key
+      console.debug('skipping a meta key');
+      return;
+    }
+
     let commandFound = false;
     for (let i = 0; i < this.settings.hotkeys.length; i++) {
-      if (this.settings.hotkeys[i].key === event.key) {
-        (this.app as any).commands.executeCommandById(
-          this.settings.hotkeys[i].commandID,
-        );
-        event.preventDefault();
-        commandFound = true;
-        break;
+      const evaluatingHotkey = this.settings.hotkeys[i];
+      if (evaluatingHotkey.key === event.key) {
+        if (
+          // check true and false to catch commands with meta/shift undefined
+          ((event.metaKey && evaluatingHotkey.meta) ||
+            (!event.metaKey && !evaluatingHotkey.meta)) &&
+          ((event.shiftKey && evaluatingHotkey.shift) ||
+            (!event.shiftKey && !evaluatingHotkey.shift))
+        ) {
+          (this.app as any).commands.executeCommandById(
+            this.settings.hotkeys[i].commandID,
+          );
+          event.preventDefault();
+          commandFound = true;
+          break;
+        }
       }
     }
 
@@ -91,12 +114,59 @@ export default class LeaderHotkeysPlugin extends Plugin {
   };
 }
 
+class SetHotkeyModal extends Modal {
+  private currentLeader: string;
+  private redraw: () => void;
+  private setNewKey: (key: string, meta: boolean, shift: boolean) => void;
+
+  constructor(
+    app: App,
+    currentLeader: string,
+    redraw: () => void,
+    setNewKey: (newKey: string, meta: boolean, shift: boolean) => void,
+  ) {
+    super(app);
+    this.currentLeader = currentLeader;
+    this.redraw = redraw;
+    this.setNewKey = setNewKey;
+  }
+
+  public onOpen = () => {
+    let { contentEl } = this;
+
+    const introText = document.createElement('p');
+    introText.setText(
+      `Press a key to use as the hotkey after the leader (${this.currentLeader}) is pressed...`,
+    );
+
+    contentEl.appendChild(introText);
+
+    document.addEventListener('keydown', this.handleKeyDown);
+  };
+
+  public onClose = () => {
+    document.removeEventListener('keydown', this.handleKeyDown);
+    this.redraw();
+
+    let { contentEl } = this;
+    contentEl.empty();
+  };
+
+  private handleKeyDown = (event: KeyboardEvent) => {
+    if (['Shift', 'Meta', 'Escape'].contains(event.key)) {
+      return;
+    }
+
+    this.setNewKey(event.key, event.metaKey, event.shiftKey);
+    this.close();
+  };
+}
+
 class LeaderPluginSettingsTab extends PluginSettingTab {
   private readonly plugin: LeaderHotkeysPlugin;
   private readonly commands: Command[];
 
-  private tempNewHotkey: string;
-  private tempNewCommand: string;
+  private tempNewHotkey: Hotkey;
 
   constructor(app: App, plugin: LeaderHotkeysPlugin) {
     super(app, plugin);
@@ -125,28 +195,16 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'Existing Hotkeys' });
 
     this.plugin.settings.hotkeys.forEach((configuredCommand) => {
-      const { key, commandID } = configuredCommand;
-
       const setting = new Setting(containerEl)
-        .addText((text) => {
-          text.setValue(key).onChange((newKey) => {
-            if (newKey === '') {
-              return;
-            }
-            const isValid = this.validateNewHotkey(newKey);
-            if (isValid) {
-              this.updateHotkeyInSettings(key, newKey);
-            }
-          });
-          text.inputEl.addClass('leader-hotkeys-key');
-        })
         .addDropdown((dropdown) => {
           this.commands.forEach((command) => {
             dropdown.addOption(command.id, command.name);
           });
-          dropdown.setValue(commandID).onChange((newCommand) => {
-            this.updateHotkeyCommandInSettings(key, newCommand);
-          });
+          dropdown
+            .setValue(configuredCommand.commandID)
+            .onChange((newCommand) => {
+              this.updateHotkeyCommandInSettings(configuredCommand, newCommand);
+            });
           dropdown.selectEl.addClass('leader-hotkeys-command');
         })
         .addExtraButton((button) => {
@@ -154,7 +212,7 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
             .setIcon('cross')
             .setTooltip('Delete shortcut')
             .onClick(() => {
-              this.deleteHotkeyFromSettings(key);
+              this.deleteHotkeyFromSettings(configuredCommand);
               this.display();
             });
           button.extraSettingsEl.addClass('leader-hotkeys-delete');
@@ -168,6 +226,31 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
       prependText.setText(`Use ${currentLeader} followed by`);
       settingControl.insertBefore(prependText, settingControl.children[0]);
 
+      const keySetter = document.createElement('kbd');
+      keySetter.addClass('setting-hotkey');
+      keySetter.setText(hotkeyToName(configuredCommand));
+      keySetter.addEventListener('click', (e: Event) => {
+        new SetHotkeyModal(
+          this.app,
+          currentLeader,
+          () => {
+            this.display();
+          },
+          (newKey: string, meta: boolean, shift: boolean) => {
+            const isValid = this.validateNewHotkey(newKey, meta, shift);
+            if (isValid) {
+              this.updateHotkeyInSettings(
+                configuredCommand,
+                newKey,
+                meta,
+                shift,
+              );
+            }
+          },
+        ).open();
+      });
+      settingControl.insertBefore(keySetter, settingControl.children[1]);
+
       const appendText = document.createElement('span');
       appendText.addClass('leader-hotkeys-setting-append-text');
       appendText.setText(`to`);
@@ -176,29 +259,21 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
     containerEl.createEl('h3', { text: 'Create New Hotkey' });
 
-    const newHotkeySetting = new Setting(containerEl)
-      .addText((text) => {
-        text.setPlaceholder('a').onChange((newKey) => {
-          if (newKey === '') {
-            return;
-          }
-          const isValid = this.validateNewHotkey(newKey);
-          if (isValid) {
-            this.tempNewHotkey = newKey;
-          }
-        });
-        text.inputEl.addClass('leader-hotkeys-key');
-      })
-      .addDropdown((dropdown) => {
+    const newHotkeySetting = new Setting(containerEl).addDropdown(
+      (dropdown) => {
         dropdown.addOption('invalid-placeholder', 'Select a Command');
         this.commands.forEach((command) => {
           dropdown.addOption(command.id, command.name);
         });
         dropdown.onChange((newCommand) => {
-          this.tempNewCommand = newCommand;
+          if (this.tempNewHotkey === undefined) {
+            this.tempNewHotkey = newEmptyHotkey();
+          }
+          this.tempNewHotkey.commandID = newCommand;
         });
         dropdown.selectEl.addClass('leader-hotkeys-command');
-      });
+      },
+    );
 
     newHotkeySetting.infoEl.remove();
     const settingControl = newHotkeySetting.settingEl.children[0];
@@ -208,6 +283,28 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
     prependText.setText(`Use ${currentLeader} followed by`);
     settingControl.insertBefore(prependText, settingControl.children[0]);
 
+    const keySetter = document.createElement('kbd');
+    keySetter.addClass('setting-hotkey');
+    keySetter.setText(hotkeyToName(this.tempNewHotkey));
+    keySetter.addEventListener('click', (e: Event) => {
+      new SetHotkeyModal(
+        this.app,
+        currentLeader,
+        () => {
+          this.display();
+        },
+        (newKey: string, meta: boolean, shift: boolean) => {
+          if (this.tempNewHotkey === undefined) {
+            this.tempNewHotkey = newEmptyHotkey();
+          }
+          this.tempNewHotkey.key = newKey;
+          this.tempNewHotkey.meta = meta;
+          this.tempNewHotkey.shift = shift;
+        },
+      ).open();
+    });
+    settingControl.insertBefore(keySetter, settingControl.children[1]);
+
     const appendText = document.createElement('span');
     appendText.addClass('leader-hotkeys-setting-append-text');
     appendText.setText(`to`);
@@ -215,7 +312,11 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl).addButton((button) => {
       button.setButtonText('Save New Hotkey').onClick(() => {
-        const isValid = this.validateNewHotkey(this.tempNewHotkey);
+        const isValid = this.validateNewHotkey(
+          this.tempNewHotkey.key,
+          this.tempNewHotkey.meta,
+          this.tempNewHotkey.shift,
+        );
         if (isValid) {
           this.storeNewHotkeyInSettings();
           this.display();
@@ -246,16 +347,20 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
     return commands;
   };
 
-  private readonly validateNewHotkey = (value: string): boolean => {
-    console.debug(`Validating value: '${value}'`);
-    if (value.length !== 1) {
-      new Notice('Leader hotkeys may only be a single letter');
-      return false;
-    }
-
+  private readonly validateNewHotkey = (
+    key: string,
+    meta: boolean,
+    shift: boolean,
+  ): boolean => {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
-      if (this.plugin.settings.hotkeys[i].key === value) {
-        new Notice(`Leader hotkey '${value}' is already in use`);
+      const hotkey = this.plugin.settings.hotkeys[i];
+      if (
+        hotkey.key === key &&
+        hotkey.meta === meta &&
+        hotkey.shift === shift
+      ) {
+        const hotkeyName = hotkeyToName(hotkey);
+        new Notice(`Leader hotkey '${hotkeyName}' is already in use`);
         return false;
       }
     }
@@ -263,48 +368,74 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
     return true;
   };
 
-  private readonly deleteHotkeyFromSettings = (key: string): void => {
+  private readonly deleteHotkeyFromSettings = (
+    existingHotkey: Hotkey,
+  ): void => {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
-      if (hotkey.key !== key) {
+      if (
+        hotkey.key !== existingHotkey.key ||
+        hotkey.meta !== existingHotkey.meta ||
+        hotkey.shift !== existingHotkey.shift
+      ) {
         continue;
       }
 
-      console.debug(`Removing leader-hotkey ${key} at index ${i}`);
+      console.debug(
+        `Removing leader-hotkey ${hotkeyToName(existingHotkey)} at index ${i}`,
+      );
       this.plugin.settings.hotkeys.splice(i, 1);
     }
     this.plugin.saveData(this.plugin.settings);
   };
 
   private readonly updateHotkeyInSettings = (
-    key: string,
+    existingHotkey: Hotkey,
     newKey: string,
+    meta: boolean,
+    shift: boolean,
   ): void => {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
-      if (hotkey.key !== key) {
+      if (
+        hotkey.key !== existingHotkey.key ||
+        hotkey.meta !== existingHotkey.meta ||
+        hotkey.shift !== existingHotkey.shift
+      ) {
         continue;
       }
 
-      console.debug(`Updating leader-hotkey ${key} at index ${i} to ${newKey}`);
+      console.debug(
+        `Updating leader-hotkey ${hotkeyToName(
+          existingHotkey,
+        )} at index ${i} to ${newKey}`,
+      );
       hotkey.key = newKey;
+      hotkey.meta = meta;
+      hotkey.shift = shift;
       break;
     }
     this.plugin.saveData(this.plugin.settings);
   };
 
   private readonly updateHotkeyCommandInSettings = (
-    key: string,
+    existingHotkey: Hotkey,
     newCommand: string,
   ): void => {
     for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
       const hotkey = this.plugin.settings.hotkeys[i];
-      if (hotkey.key !== key) {
+      if (
+        hotkey.key !== existingHotkey.key ||
+        hotkey.meta !== existingHotkey.meta ||
+        hotkey.shift !== existingHotkey.shift
+      ) {
         continue;
       }
 
       console.debug(
-        `Updating leader-hotkey command ${key} at index ${i} to ${newCommand}`,
+        `Updating leader-hotkey command ${hotkeyToName(
+          existingHotkey,
+        )} at index ${i} to ${newCommand}`,
       );
       hotkey.commandID = newCommand;
       break;
@@ -314,14 +445,37 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 
   private readonly storeNewHotkeyInSettings = (): void => {
     console.debug(
-      `Adding leader-hotkey command ${this.tempNewHotkey} to ${this.tempNewCommand}`,
+      `Adding leader-hotkey command ${this.tempNewHotkey} to ${this.tempNewHotkey.commandID}`,
     );
-    this.plugin.settings.hotkeys.push({
-      key: this.tempNewHotkey,
-      commandID: this.tempNewCommand,
-    });
+    this.plugin.settings.hotkeys.push(this.tempNewHotkey);
     this.plugin.saveData(this.plugin.settings);
-    this.tempNewHotkey = '';
-    this.tempNewCommand = '';
+    this.tempNewHotkey = newEmptyHotkey();
   };
 }
+
+const newEmptyHotkey = (): Hotkey => {
+  return { key: '', shift: false, meta: false, commandID: '' };
+};
+
+const hotkeyToName = (hotkey: Hotkey): string => {
+  if (hotkey === undefined || hotkey.key === '') {
+    return '?';
+  }
+  let keyToUse = (() => {
+    switch (hotkey.key) {
+      case 'ArrowRight':
+        return '→';
+      case 'ArrowLeft':
+        return '←';
+      case 'ArrowDown':
+        return '↓';
+      case 'ArrowUp':
+        return '↑';
+      default:
+        return hotkey.key;
+    }
+  })();
+  return (
+    (hotkey.meta ? 'meta+' : '') + (hotkey.shift ? 'shift+' : '') + keyToUse
+  );
+};
