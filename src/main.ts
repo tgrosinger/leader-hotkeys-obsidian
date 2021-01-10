@@ -37,7 +37,10 @@ export default class LeaderHotkeysPlugin extends Plugin {
   private cmEditors: CodeMirror.Editor[];
 
   public async onload(): Promise<void> {
-    this.settings = (await this.loadData()) || { hotkeys: defaultHotkeys };
+    this.settings = Object.assign(
+      { hotkeys: defaultHotkeys },
+      await this.loadData(),
+    );
 
     this.cmEditors = [];
     this.registerEvent(
