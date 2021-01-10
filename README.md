@@ -6,17 +6,18 @@ in Obsidian, even those added by other plugins!
 The leader key is pressed before the assigned hotkey, similar to hotkeys in
 tmux or Vim.
 
-By default, the leader is <kbd>ctrl</kbd>+<kbd>b</kbd>, however this can be
-configured in the Obsidian Hotkeys settings page, just like any other hotkey.
+By default there is no leader key defined. I personally use
+<kbd>ctrl</kbd>+<kbd>b</kbd>, however you can configure any leader key in the
+Obsidian Hotkeys settings page, just like any other hotkey.
 
 By default the following commands are configured:
 
-| Leader Hotkey                             | Action                     |
-| ----------------------------------------- | -------------------------- |
-| <kbd>ctrl</kbd>+<kbd>b</kbd> <kbd>j</kbd> | Focus on pane below        |
-| <kbd>ctrl</kbd>+<kbd>b</kbd> <kbd>k</kbd> | Focus on pane above        |
-| <kbd>ctrl</kbd>+<kbd>b</kbd> <kbd>h</kbd> | Focus on pane to the left  |
-| <kbd>ctrl</kbd>+<kbd>b</kbd> <kbd>l</kbd> | Focus on pane to the right |
+| Leader Hotkey                  | Action                     |
+| ------------------------------ | -------------------------- |
+| <kbd>leader</kbd> <kbd>j</kbd> | Focus on pane below        |
+| <kbd>leader</kbd> <kbd>k</kbd> | Focus on pane above        |
+| <kbd>leader</kbd> <kbd>h</kbd> | Focus on pane to the left  |
+| <kbd>leader</kbd> <kbd>l</kbd> | Focus on pane to the right |
 
 ## How to Install
 

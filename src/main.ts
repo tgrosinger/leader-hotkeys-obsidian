@@ -41,7 +41,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 
     this.cmEditors = [];
     this.registerEvent(
-      this.app.on('codemirror', (cm: CodeMirror.Editor) => {
+      this.app.workspace.on('codemirror', (cm: CodeMirror.Editor) => {
         this.cmEditors.push(cm);
         cm.on('keydown', this.handleKeyDown);
       }),
@@ -50,12 +50,6 @@ export default class LeaderHotkeysPlugin extends Plugin {
     this.addCommand({
       id: 'leader',
       name: 'Leader key',
-      hotkeys: [
-        {
-          modifiers: ['Mod'],
-          key: 'b',
-        },
-      ],
       callback: () => {
         console.debug('Leader pressed...');
         this.leaderPending = true;
