@@ -37,10 +37,10 @@ export default class LeaderHotkeysPlugin extends Plugin {
   private cmEditors: CodeMirror.Editor[];
 
   public async onload(): Promise<void> {
-    this.settings = Object.assign(
-      { hotkeys: defaultHotkeys },
-      await this.loadData(),
-    );
+    this.settings = {
+      hotkeys: defaultHotkeys,
+      ...(await this.loadData()),
+    };
 
     this.cmEditors = [];
     this.registerEvent(
@@ -72,6 +72,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
     cm: CodeMirror.Editor,
     event: KeyboardEvent,
   ): void => {
+    console.log('Got a key press');
     if (!this.leaderPending) {
       return;
     }
