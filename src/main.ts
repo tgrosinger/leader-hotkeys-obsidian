@@ -72,7 +72,6 @@ export default class LeaderHotkeysPlugin extends Plugin {
     cm: CodeMirror.Editor,
     event: KeyboardEvent,
   ): void => {
-    console.log('Got a key press');
     if (!this.leaderPending) {
       return;
     }
