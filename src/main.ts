@@ -165,17 +165,17 @@ class SetHotkeyModal extends Modal {
 
 class LeaderPluginSettingsTab extends PluginSettingTab {
   private readonly plugin: LeaderHotkeysPlugin;
-  private readonly commands: Command[];
+  private commands: Command[];
 
   private tempNewHotkey: Hotkey;
 
   constructor(app: App, plugin: LeaderHotkeysPlugin) {
     super(app, plugin);
     this.plugin = plugin;
-    this.commands = this.generateCommandList(app);
   }
 
   public display(): void {
+    this.commands = this.generateCommandList(this.app);
     const { containerEl } = this;
     containerEl.empty();
 
