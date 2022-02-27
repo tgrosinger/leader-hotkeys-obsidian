@@ -36,8 +36,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
     await this._loadSettings();
     await this._registerWorkspaceEvents();
     await this._registerLeaderKeymap();
-
-    this.addSettingTab(new LeaderPluginSettingsTab(this.app, this));
+    await this._registerPeripheralUIElements();
 
     writeConsole('Finished Loading.');
   }
@@ -91,7 +90,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
     const savedSettings = await this.loadData();
 
     if (savedSettings) {
-      writeConsole('Sucessfully loaded previous settings.');
+      writeConsole('Successfully loaded previous settings.');
     } else {
       writeConsole(
         'No saved settings were found, default ones will be used instead.',
@@ -121,6 +120,14 @@ export default class LeaderHotkeysPlugin extends Plugin {
       },
     };
     this.addCommand(leaderKeyCommand);
+  }
+
+  private async _registerPeripheralUIElements(): Promise<void> {
+    writeConsole('Registering peripheral interface elements.');
+
+    const leaderPluginSettingsTab = new LeaderPluginSettingsTab(this.app, this);
+    this.addSettingTab(leaderPluginSettingsTab);
+    writeConsole('Registered Setting Tab.');
   }
 }
 
