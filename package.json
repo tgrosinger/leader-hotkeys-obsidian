@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "rollup --config rollup.config.js -w",
     "build": "rollup --config rollup.config.js",
-    "prettier": "prettier --write 'src/**/*.+(ts|tsx|json|html|css)'",
+    "prettier": "prettier --write \"src/**/*.+(ts|tsx|json|html|css)\"",
     "eslint": "eslint . --ext .ts,.tsx --fix"
   },
   "keywords": [],
@@ -26,6 +26,7 @@
     "eslint-plugin-prefer-arrow": "1.2.2",
     "eslint-plugin-simple-import-sort": "5.0.3",
     "obsidian": "https://github.com/obsidianmd/obsidian-api/archive/dbfa19ad7aa6557f0ecff962065c3f540bc77e27.tar.gz",
+    "prettier": "^2.5.1",
     "rollup": "^2.32.1",
     "tslib": "^2.0.3",
     "typescript": "^4.0.3"
