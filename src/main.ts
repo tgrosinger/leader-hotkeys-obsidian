@@ -1,4 +1,11 @@
-import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, } from 'obsidian';
+import {
+  App,
+  Modal,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+} from 'obsidian';
 
 interface Command {
   name: string;
@@ -23,23 +30,16 @@ export default class LeaderHotkeysPlugin extends Plugin {
   private cmEditors: CodeMirror.Editor[];
 
   public async onload(): Promise<void> {
-    writeConsole('Started Loading');
+    writeConsole('Started Loading.');
 
     this.cmEditors = [];
     await this._loadSettings();
     await this._setCallbacks();
-
-
-    this.addCommand({
-      id: 'leader',
-      name: 'Leader key',
-      callback: () => {
-        console.debug('Leader pressed...');
-        this.leaderPending = true;
-      },
-    });
+    await this._createLeaderKeymap();
 
     this.addSettingTab(new LeaderPluginSettingsTab(this.app, this));
+
+	writeConsole('Finished Loading.')
   }
 
   public onunload(): void {
@@ -110,12 +110,25 @@ export default class LeaderHotkeysPlugin extends Plugin {
     writeConsole('Registering necessary event callbacks');
 
     const codeMirrorCallback = (cm: CodeMirror.Editor): void => {
-      cm.on( 'keydown', this.handleKeyDown);
+      cm.on('keydown', this.handleKeyDown);
       this.cmEditors.push(cm);
     };
 
     this.registerEvent(this.app.workspace.on('codemirror', codeMirrorCallback));
-	writeConsole('Successfully registered event callbacks.')
+    writeConsole('Successfully registered event callbacks.');
+  }
+
+  private async _createLeaderKeymap(): Promise<void> {
+    writeConsole('Registering leaderKey command.');
+    const leaderKeyCommand = {
+      id: 'leader',
+      name: 'Leader key',
+      callback: () => {
+        writeConsole('Leader pressed...');
+        this.leaderPending = true;
+      },
+    };
+    this.addCommand(leaderKeyCommand);
   }
 }
 
