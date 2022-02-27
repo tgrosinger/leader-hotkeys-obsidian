@@ -1,11 +1,4 @@
-import {
-  App,
-  Modal,
-  Notice,
-  Plugin,
-  PluginSettingTab,
-  Setting,
-} from 'obsidian';
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, } from 'obsidian';
 
 interface Command {
   name: string;
@@ -32,15 +25,10 @@ export default class LeaderHotkeysPlugin extends Plugin {
   public async onload(): Promise<void> {
     writeConsole('Started Loading');
 
-    await this.loadSettings();
-
     this.cmEditors = [];
-    this.registerEvent(
-      this.app.workspace.on('codemirror', (cm: CodeMirror.Editor) => {
-        this.cmEditors.push(cm);
-        cm.on('keydown', this.handleKeyDown);
-      }),
-    );
+    await this._loadSettings();
+    await this._setCallbacks();
+
 
     this.addCommand({
       id: 'leader',
@@ -102,7 +90,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
     this.leaderPending = false;
   };
 
-  private async loadSettings(): Promise<void> {
+  private async _loadSettings(): Promise<void> {
     writeConsole('Loading previously saved settings.');
 
     const savedSettings = await this.loadData();
@@ -116,6 +104,18 @@ export default class LeaderHotkeysPlugin extends Plugin {
     }
 
     this.settings = savedSettings || defaultSettings;
+  }
+
+  private async _setCallbacks(): Promise<void> {
+    writeConsole('Registering necessary event callbacks');
+
+    const codeMirrorCallback = (cm: CodeMirror.Editor): void => {
+      cm.on( 'keydown', this.handleKeyDown);
+      this.cmEditors.push(cm);
+    };
+
+    this.registerEvent(this.app.workspace.on('codemirror', codeMirrorCallback));
+	writeConsole('Successfully registered event callbacks.')
   }
 }
 
@@ -462,10 +462,6 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
   };
 }
 
-const PLUGIN_NAME = 'Leader Hotkeys';
-const writeConsole = (message: string): void => {
-  console.debug(`${PLUGIN_NAME}: ${message}`);
-};
 const defaultHotkeys: Hotkey[] = [
   { key: 'h', meta: false, shift: false, commandID: 'editor:focus-left' },
   { key: 'j', meta: false, shift: false, commandID: 'editor:focus-bottom' },
@@ -474,6 +470,11 @@ const defaultHotkeys: Hotkey[] = [
 ];
 const defaultSettings: Settings = {
   hotkeys: defaultHotkeys,
+};
+
+const PLUGIN_NAME = 'Leader Hotkeys';
+const writeConsole = (message: string): void => {
+  console.debug(` ${PLUGIN_NAME}: ${message}`);
 };
 const newEmptyHotkey = (): Hotkey => ({
   key: '',
