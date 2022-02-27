@@ -29,22 +29,24 @@ export default class LeaderHotkeysPlugin extends Plugin {
   private leaderPending: boolean;
   private cmEditors: CodeMirror.Editor[];
 
+  private readonly editorKeydown = 'keydown';
+
   public async onload(): Promise<void> {
     writeConsole('Started Loading.');
 
     this.cmEditors = [];
     await this._loadSettings();
-    await this._setCallbacks();
+    await this._registerEditorCallback();
     await this._createLeaderKeymap();
 
     this.addSettingTab(new LeaderPluginSettingsTab(this.app, this));
 
-	writeConsole('Finished Loading.')
+    writeConsole('Finished Loading.');
   }
 
   public onunload(): void {
     this.cmEditors.forEach((cm) => {
-      cm.off('keydown', this.handleKeyDown);
+      cm.off(this.editorKeydown, this.handleKeyDown);
     });
   }
 
@@ -106,12 +108,12 @@ export default class LeaderHotkeysPlugin extends Plugin {
     this.settings = savedSettings || defaultSettings;
   }
 
-  private async _setCallbacks(): Promise<void> {
+  private async _registerEditorCallback(): Promise<void> {
     writeConsole('Registering necessary event callbacks');
 
     const codeMirrorCallback = (cm: CodeMirror.Editor): void => {
-      cm.on('keydown', this.handleKeyDown);
       this.cmEditors.push(cm);
+      cm.on(this.editorKeydown, this.handleKeyDown);
     };
 
     this.registerEvent(this.app.workspace.on('codemirror', codeMirrorCallback));
