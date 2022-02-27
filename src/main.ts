@@ -7,28 +7,204 @@ import {
   Setting,
 } from 'obsidian';
 
-interface Command {
-  name: string;
-  id: string;
-}
+type Optional<T> = T | undefined | null;
 
+class KeyPress {
+  public static of(event: KeyboardEvent): KeyPress {
+    const key = event.key;
+    const shift = event.shiftKey;
+    const meta = event.metaKey || event.ctrlKey;
+    return new KeyPress(key, shift, meta);
+  }
+
+  public readonly key: string;
+  public readonly meta: boolean;
+  public readonly shift: boolean;
+
+  constructor(key: string, shift: boolean, meta: boolean) {
+    this.key = key;
+    this.shift = shift;
+    this.meta = meta;
+  }
+
+  public repr(): string {
+    return `${this.meta ? '⌘' : ''}${this.shift ? '⇧' : ''}${this.key}`;
+  }
+}
 class Hotkey {
-  public key: string;
-  public meta: boolean;
-  public shift: boolean;
+  public sequence: KeyPress[];
   public commandID: string;
 }
 
-interface Settings {
+class TrieNode<T> {
+  public children = new Map<string, TrieNode<T>>();
+  public value: Optional<T>;
+
+  public child(key: string): Optional<TrieNode<T>> {
+    return this.children.get(key);
+  }
+
+  public addChild(key: string, child: TrieNode<T>): void {
+    this.children.set(key, child);
+  }
+
+  public allLeaf(): TrieNode<T>[] {
+    if (this.children.size === 0) {
+      return [this];
+    }
+
+    let result: TrieNode<T>[] = [];
+
+    this.children.forEach((child, key) => {
+      result = result.concat(child.allLeaf());
+    });
+
+    return result;
+  }
+  public allValues(): T[] {
+    return this.allLeaf().map((node) => node.value);
+  }
+  public isLeaf(): boolean {
+    return this.children.size === 0;
+  }
+  public setValue(value: T): void {
+    this.value = value;
+  }
+}
+
+class KeymapTrie {
+  private readonly root: TrieNode<Hotkey>;
+  constructor(keymaps: Hotkey[]) {
+    this.root = new TrieNode();
+
+    for (const keymap of keymaps) {
+      let lastSeenNode = this.root;
+      for (const keyPress of keymap.sequence) {
+        const key = keyPress.repr();
+        const child = lastSeenNode.child(key) || new TrieNode();
+        lastSeenNode.addChild(key, child);
+        lastSeenNode = child;
+      }
+      lastSeenNode.setValue(keymap);
+    }
+  }
+
+  public bestMatch(keyPresses: KeyPress[]): Optional<TrieNode<Hotkey>> {
+    let lastNode = this.root;
+    for (const keyPress of keyPresses) {
+      const key = keyPress.repr();
+      const child = lastNode.child(key);
+      if (!child) {
+        return null;
+      }
+      lastNode = child;
+    }
+
+    return lastNode;
+  }
+}
+
+enum MatchingState {
+  NoMatch,
+  LeaderMatch,
+  PartialMatch,
+  FullMatch,
+  ExitMatch,
+}
+
+class StateMachine {
+  private readonly trie: KeymapTrie;
+  private currentState: MatchingState;
+  private keyPressBuffer: KeyPress[];
+  private availableCommands: Hotkey[];
+
+  constructor(hotkeys: Hotkey[]) {
+    this.trie = new KeymapTrie(hotkeys);
+    this.currentState = MatchingState.NoMatch;
+    this.keyPressBuffer = [];
+    this.availableCommands = [];
+  }
+
+  public advance(event: KeyboardEvent): MatchingState {
+    const keypress = KeyPress.of(event);
+    this.keyPressBuffer.push(keypress);
+
+    switch (this.currentState) {
+      // Start Matching
+      case MatchingState.NoMatch:
+        {
+          const bestMatch = this.trie.bestMatch(this.keyPressBuffer);
+          this.availableCommands = bestMatch ? bestMatch.allValues() : [];
+          // No Match Logic
+          if (!bestMatch) {
+            this.clear();
+          } else if (bestMatch.isLeaf()) {
+            this.currentState = MatchingState.FullMatch;
+          } else {
+            this.currentState = MatchingState.LeaderMatch;
+          }
+        }
+        return this.currentState;
+      // Continue / Finish Matching
+      case MatchingState.LeaderMatch:
+      case MatchingState.PartialMatch:
+        {
+          const bestMatch = this.trie.bestMatch(this.keyPressBuffer);
+          this.availableCommands = bestMatch ? bestMatch.allValues() : [];
+
+          if (!bestMatch) {
+            this.currentState = MatchingState.ExitMatch;
+          } else if (bestMatch.isLeaf()) {
+            this.currentState = MatchingState.FullMatch;
+          } else {
+            this.currentState = MatchingState.PartialMatch;
+          }
+        }
+        return this.currentState;
+      // Clear previous matching and rematch. this is a bit confusing. Can we do better?
+      case MatchingState.FullMatch:
+      case MatchingState.ExitMatch:
+        this.clear();
+        return this.advance(event);
+    }
+  }
+
+  public getPartialMatchedKeymaps(): readonly Hotkey[] {
+    return this.availableCommands;
+  }
+
+  public getFullyMatchedKeymap(): Optional<Hotkey> {
+    const availableCommandLength = this.getPartialMatchedKeymaps().length;
+    const isFullMatch = this.currentState === MatchingState.FullMatch;
+
+    // Sanity checking.
+    if (isFullMatch && availableCommandLength !== 1) {
+      writeConsole(
+        'State Machine in FullMatch state, but availableHotkeys.length contains more than 1 element. This is definitely a bug.',
+      );
+      return null;
+    }
+
+    if (isFullMatch && availableCommandLength === 1) {
+      return this.availableCommands[0];
+    }
+    return null;
+  }
+
+  private clear(): void {
+    this.currentState = MatchingState.NoMatch;
+    this.keyPressBuffer = [];
+    this.availableCommands = [];
+  }
+}
+
+interface PluginSettings {
   hotkeys: Hotkey[];
 }
 
 export default class LeaderHotkeysPlugin extends Plugin {
-  public settings: Settings;
-
-  private leaderPending: boolean;
-
-  private readonly editorKeydown = 'keydown';
+  public settings: PluginSettings;
+  private state: StateMachine;
 
   public async onload(): Promise<void> {
     writeConsole('Started Loading.');
@@ -46,42 +222,51 @@ export default class LeaderHotkeysPlugin extends Plugin {
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (!this.leaderPending) {
-      return;
-    }
+    const currentState = this.state.advance(event);
+    switch (currentState) {
+      case MatchingState.NoMatch:
+        writeConsole(
+          'An keypress resulted in a NoMatch state. Letting this event pass.',
+        );
+        return;
 
-    if (event.key === 'Shift' || event.key === 'Meta') {
-      // Don't clear leaderPending for a meta key
-      console.debug('skipping a meta key');
-      return;
-    }
+      case MatchingState.ExitMatch:
+        event.preventDefault();
+        writeConsole(
+          'An keypress resulted in a ExitMatch. Exiting matching state.',
+        );
+        return;
 
-    let commandFound = false;
-    for (let i = 0; i < this.settings.hotkeys.length; i++) {
-      const evaluatingHotkey = this.settings.hotkeys[i];
-      if (evaluatingHotkey.key === event.key) {
-        if (
-          // check true and false to catch commands with meta/shift undefined
-          ((event.metaKey && evaluatingHotkey.meta) ||
-            (!event.metaKey && !evaluatingHotkey.meta)) &&
-          ((event.shiftKey && evaluatingHotkey.shift) ||
-            (!event.shiftKey && !evaluatingHotkey.shift))
-        ) {
-          (this.app as any).commands.executeCommandById(
-            this.settings.hotkeys[i].commandID,
+      case MatchingState.LeaderMatch:
+        event.preventDefault();
+        writeConsole(
+          'An keypress resulted in a LeaderMatch. Entering matching state.',
+        );
+        return;
+
+      case MatchingState.PartialMatch:
+        event.preventDefault();
+        writeConsole(
+          'An keypress resulted in a ParialMatch. Waiting for the rest of the key sequence.',
+        );
+        return;
+
+      case MatchingState.FullMatch:
+        event.preventDefault();
+        writeConsole(
+          'An keypress resulted in a FullMatch. Dispatching keymap.',
+        );
+        const keymap = this.state.getFullyMatchedKeymap();
+        if (keymap) {
+          const app = this.app as any;
+          app.commands.executeCommandById(keymap.commandID);
+        } else {
+          writeConsole(
+            'No keymap found for the full match. This is definitely a bug.',
           );
-          event.preventDefault();
-          commandFound = true;
-          break;
         }
-      }
+        return;
     }
-
-    if (!commandFound) {
-      console.debug('cancelling leader');
-    }
-
-    this.leaderPending = false;
   };
 
   private async _loadSettings(): Promise<void> {
@@ -98,6 +283,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
     }
 
     this.settings = savedSettings || defaultSettings;
+    this.state = new StateMachine(this.settings.hotkeys);
   }
 
   private async _registerWorkspaceEvents(): Promise<void> {
@@ -105,8 +291,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
 
     const workspaceContainer = this.app.workspace.containerEl;
     this.registerDomEvent(workspaceContainer, 'keydown', this.handleKeyDown);
-
-    writeConsole('Successfully registered event callbacks.');
+    writeConsole('Registered workspace "keydown" event callbacks.');
   }
 
   private async _registerLeaderKeymap(): Promise<void> {
@@ -115,8 +300,7 @@ export default class LeaderHotkeysPlugin extends Plugin {
       id: 'leader',
       name: 'Leader key',
       callback: () => {
-        writeConsole('Leader pressed...');
-        this.leaderPending = true;
+        //	need something here.
       },
     };
     this.addCommand(leaderKeyCommand);
@@ -181,6 +365,11 @@ class SetHotkeyModal extends Modal {
     this.setNewKey(event.key, event.metaKey, event.shiftKey);
     this.close();
   };
+}
+
+interface Command {
+  name: string;
+  id: string;
 }
 
 class LeaderPluginSettingsTab extends PluginSettingTab {
@@ -475,18 +664,38 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
 }
 
 const defaultHotkeys: Hotkey[] = [
-  { key: 'h', meta: false, shift: false, commandID: 'editor:focus-left' },
-  { key: 'j', meta: false, shift: false, commandID: 'editor:focus-bottom' },
-  { key: 'k', meta: false, shift: false, commandID: 'editor:focus-top' },
-  { key: 'l', meta: false, shift: false, commandID: 'editor:focus-right' },
+  {
+    sequence: [new KeyPress('b', false, true), new KeyPress('h', false, false)],
+    commandID: 'editor:focus-left',
+  },
+  {
+    sequence: [new KeyPress('b', false, true), new KeyPress('j', false, false)],
+    commandID: 'editor:focus-bottom',
+  },
+  {
+    sequence: [new KeyPress('b', false, true), new KeyPress('k', false, false)],
+    commandID: 'editor:focus-top',
+  },
+  {
+    sequence: [new KeyPress('b', false, true), new KeyPress('l', false, false)],
+    commandID: 'editor:focus-right',
+  },
+  {
+    sequence: [
+      new KeyPress('q', false, true),
+      new KeyPress('1', false, false),
+      new KeyPress('2', false, false),
+      new KeyPress('2', false, false),
+    ],
+    commandID: 'command-palette:open',
+  },
 ];
-const defaultSettings: Settings = {
+const defaultSettings: PluginSettings = {
   hotkeys: defaultHotkeys,
 };
 
-const PLUGIN_NAME = 'Leader Hotkeys';
 const writeConsole = (message: string): void => {
-  console.debug(` ${PLUGIN_NAME}: ${message}`);
+  console.debug(` Leader Hotkeys: ${message}`);
 };
 const newEmptyHotkey = (): Hotkey => ({
   key: '',
