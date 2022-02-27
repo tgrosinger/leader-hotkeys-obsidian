@@ -7,6 +7,11 @@ import {
   Setting,
 } from 'obsidian';
 
+const PLUGIN_NAME = 'Leader Hotkeys';
+const writeConsole = (message: string): void => {
+  console.debug(`${PLUGIN_NAME}: ${message}`);
+};
+
 interface Command {
   name: string;
   id: string;
@@ -41,8 +46,9 @@ export default class LeaderHotkeysPlugin extends Plugin {
   private cmEditors: CodeMirror.Editor[];
 
   public async onload(): Promise<void> {
-    const savedSettings = await this.loadData();
-    this.settings = savedSettings || defaultSettings;
+    writeConsole('Started Loading');
+
+    await this.loadSettings();
 
     this.cmEditors = [];
     this.registerEvent(
@@ -111,6 +117,22 @@ export default class LeaderHotkeysPlugin extends Plugin {
 
     this.leaderPending = false;
   };
+
+  private async loadSettings(): Promise<void> {
+    writeConsole('Loading previously saved settings.');
+
+    const savedSettings = await this.loadData();
+
+    if (savedSettings) {
+      writeConsole('Sucessfully loaded previous settings.');
+    } else {
+      writeConsole(
+        'No saved settings were found, default ones will be used instead.',
+      );
+    }
+
+    this.settings = savedSettings || defaultSettings;
+  }
 }
 
 class SetHotkeyModal extends Modal {
