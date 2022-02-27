@@ -7,11 +7,6 @@ import {
   Setting,
 } from 'obsidian';
 
-const PLUGIN_NAME = 'Leader Hotkeys';
-const writeConsole = (message: string): void => {
-  console.debug(`${PLUGIN_NAME}: ${message}`);
-};
-
 interface Command {
   name: string;
   id: string;
@@ -27,17 +22,6 @@ class Hotkey {
 interface Settings {
   hotkeys: Hotkey[];
 }
-
-const defaultHotkeys: Hotkey[] = [
-  { key: 'h', meta: false, shift: false, commandID: 'editor:focus-left' },
-  { key: 'j', meta: false, shift: false, commandID: 'editor:focus-bottom' },
-  { key: 'k', meta: false, shift: false, commandID: 'editor:focus-top' },
-  { key: 'l', meta: false, shift: false, commandID: 'editor:focus-right' },
-];
-
-const defaultSettings: Settings = {
-  hotkeys: defaultHotkeys,
-};
 
 export default class LeaderHotkeysPlugin extends Plugin {
   public settings: Settings;
@@ -478,13 +462,25 @@ class LeaderPluginSettingsTab extends PluginSettingTab {
   };
 }
 
+const PLUGIN_NAME = 'Leader Hotkeys';
+const writeConsole = (message: string): void => {
+  console.debug(`${PLUGIN_NAME}: ${message}`);
+};
+const defaultHotkeys: Hotkey[] = [
+  { key: 'h', meta: false, shift: false, commandID: 'editor:focus-left' },
+  { key: 'j', meta: false, shift: false, commandID: 'editor:focus-bottom' },
+  { key: 'k', meta: false, shift: false, commandID: 'editor:focus-top' },
+  { key: 'l', meta: false, shift: false, commandID: 'editor:focus-right' },
+];
+const defaultSettings: Settings = {
+  hotkeys: defaultHotkeys,
+};
 const newEmptyHotkey = (): Hotkey => ({
   key: '',
   shift: false,
   meta: false,
   commandID: '',
 });
-
 const hotkeyToName = (hotkey: Hotkey): string => {
   if (hotkey === undefined || hotkey.key === '') {
     return '?';
