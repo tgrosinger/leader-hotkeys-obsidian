@@ -27,17 +27,15 @@ export default class LeaderHotkeysPlugin extends Plugin {
   public settings: Settings;
 
   private leaderPending: boolean;
-  private cmEditors: CodeMirror.Editor[];
 
   private readonly editorKeydown = 'keydown';
 
   public async onload(): Promise<void> {
     writeConsole('Started Loading.');
 
-    this.cmEditors = [];
     await this._loadSettings();
-    await this._registerEditorCallback();
-    await this._createLeaderKeymap();
+    await this._registerWorkspaceEvents();
+    await this._registerLeaderKeymap();
 
     this.addSettingTab(new LeaderPluginSettingsTab(this.app, this));
 
@@ -45,15 +43,10 @@ export default class LeaderHotkeysPlugin extends Plugin {
   }
 
   public onunload(): void {
-    this.cmEditors.forEach((cm) => {
-      cm.off(this.editorKeydown, this.handleKeyDown);
-    });
+    writeConsole('Unloading plugin.');
   }
 
-  private readonly handleKeyDown = (
-    cm: CodeMirror.Editor,
-    event: KeyboardEvent,
-  ): void => {
+  private readonly handleKeyDown = (event: KeyboardEvent): void => {
     if (!this.leaderPending) {
       return;
     }
@@ -108,19 +101,16 @@ export default class LeaderHotkeysPlugin extends Plugin {
     this.settings = savedSettings || defaultSettings;
   }
 
-  private async _registerEditorCallback(): Promise<void> {
+  private async _registerWorkspaceEvents(): Promise<void> {
     writeConsole('Registering necessary event callbacks');
 
-    const codeMirrorCallback = (cm: CodeMirror.Editor): void => {
-      this.cmEditors.push(cm);
-      cm.on(this.editorKeydown, this.handleKeyDown);
-    };
+    const workspaceContainer = this.app.workspace.containerEl;
+    this.registerDomEvent(workspaceContainer, 'keydown', this.handleKeyDown);
 
-    this.registerEvent(this.app.workspace.on('codemirror', codeMirrorCallback));
     writeConsole('Successfully registered event callbacks.');
   }
 
-  private async _createLeaderKeymap(): Promise<void> {
+  private async _registerLeaderKeymap(): Promise<void> {
     writeConsole('Registering leaderKey command.');
     const leaderKeyCommand = {
       id: 'leader',
