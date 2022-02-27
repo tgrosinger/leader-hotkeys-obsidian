@@ -30,6 +30,10 @@ const defaultHotkeys: Hotkey[] = [
   { key: 'l', meta: false, shift: false, commandID: 'editor:focus-right' },
 ];
 
+const defaultSettings: Settings = {
+  hotkeys: defaultHotkeys,
+};
+
 export default class LeaderHotkeysPlugin extends Plugin {
   public settings: Settings;
 
@@ -37,10 +41,8 @@ export default class LeaderHotkeysPlugin extends Plugin {
   private cmEditors: CodeMirror.Editor[];
 
   public async onload(): Promise<void> {
-    this.settings = {
-      hotkeys: defaultHotkeys,
-      ...(await this.loadData()),
-    };
+    const savedSettings = await this.loadData();
+    this.settings = savedSettings || defaultSettings;
 
     this.cmEditors = [];
     this.registerEvent(
