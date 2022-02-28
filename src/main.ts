@@ -449,17 +449,18 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 	}
 
 	public readonly advance = ( event: KeyPress ): RegisterMachineState => {
-		this.currentSequence.push( event );
+
 		const classification = event.classification();
 
 		switch ( this.currentState ) {
 			case RegisterMachineState.NoKeys:
 				if ( classification === PressType.NoKey ) {
-					this.currentSequence.pop();
 					this.currentState = RegisterMachineState.RetainedKeys;
 				} else if ( classification === PressType.SpecialKey ) {
+					this.currentSequence.push(event)
 					this.currentState = RegisterMachineState.PendingConfirmation;
 				} else {
+					this.currentSequence.push(event)
 					this.currentState = RegisterMachineState.FirstKey;
 				}
 				return this.currentState;
@@ -469,28 +470,25 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 			case RegisterMachineState.BacktrackedKey:
 			case RegisterMachineState.AddedKeys:
 				if ( classification === PressType.NoKey ) {
-					this.currentSequence.pop();
 					this.currentState = RegisterMachineState.RetainedKeys;
 				} else if ( classification === PressType.SpecialKey ) {
+					this.currentSequence.push(event)
 					this.currentState = RegisterMachineState.PendingConfirmation;
 				} else {
+					this.currentSequence.push(event)
 					this.currentState = RegisterMachineState.AddedKeys;
 				}
 				return this.currentState;
 
 			case RegisterMachineState.PendingConfirmation:
 				if ( event.key === 'Enter' && event.ctrl && event.alt ) {
-					this.currentSequence.pop();
 					this.currentState = RegisterMachineState.FinishedRegistering;
 				} else if ( event.key === 'Enter' ) {
-					this.currentSequence.pop();
 					this.currentState = RegisterMachineState.AddedKeys;
 				} else if ( event.key === 'Backspace' ) {
 					this.currentSequence.pop();
-					this.currentSequence.pop();
 					this.currentState = RegisterMachineState.BacktrackedKey;
 				} else {
-					this.currentSequence.pop();
 					this.currentState = RegisterMachineState.PendingConfirmation;
 				}
 				return this.currentState;
