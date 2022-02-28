@@ -1,11 +1,4 @@
-import {
-	App,
-	Modal,
-	Notice,
-	Plugin,
-	PluginSettingTab,
-	Setting,
-} from 'obsidian';
+import { App, Modal, Plugin, PluginSettingTab, Setting, } from 'obsidian';
 
 // region  Type Shims
 interface ObsidianCommand {
@@ -545,7 +538,7 @@ class KeymapRegisterer extends Modal {
 	};
 
 	private readonly saveKeyMap = ( keymap: KeyMap ): void => {
-		this.customParent.updateHotkeyInSettings( null, null, null, null );
+		this.customParent.updateKeymap( null, null, null, null );
 	};
 
 	private readonly handleKeyDown = ( event: KeyboardEvent ): void => {
@@ -676,11 +669,10 @@ class LeaderSettingsTab extends PluginSettingTab {
 	private commands: ObsidianCommand[];
 	private tempNewHotkey: KeyMap;
 
-	constructor( app: App, plugin: LeaderHotkeys ) {
-		super( app, plugin );
+	constructor( plugin: LeaderHotkeys ) {
+		super( plugin.app, plugin );
 		this.plugin = plugin;
-		this.app    = app;
-		// this.app = 2
+		this.app    = plugin.app;
 	}
 
 	public display(): void {
@@ -708,7 +700,7 @@ class LeaderSettingsTab extends PluginSettingTab {
 			// Existing hokeys
 			containerEl.createEl( 'h3', { text: 'Existing Hotkeys' } );
 
-			this.plugin.settings.hotkeys.forEach( ( configuredCommand ) => {
+			this.currentKeymaps().forEach( ( configuredCommand ) => {
 				const setting = new Setting( containerEl )
 					.addDropdown( ( dropdown ) => {
 						this.commands.forEach( ( command ) => {
@@ -729,7 +721,7 @@ class LeaderSettingsTab extends PluginSettingTab {
 							.setIcon( 'cross' )
 							.setTooltip( 'Delete shortcut' )
 							.onClick( () => {
-								this.deleteHotkeyFromSettings( configuredCommand );
+								this.removeKeymap( configuredCommand );
 								this.display();
 							} );
 						button.extraSettingsEl.addClass( 'leader-hotkeys-delete' );
@@ -817,108 +809,73 @@ class LeaderSettingsTab extends PluginSettingTab {
 		}
 	}
 
-	public validateNewHotkey(
-		key: string,
-		meta: boolean,
-		shift: boolean,
-	): boolean {
-		for ( let i = 0; i < this.plugin.settings.hotkeys.length; i++ ) {
-			const hotkey = this.plugin.settings.hotkeys[ i ];
-			if (
-				hotkey.key === key &&
-				hotkey.meta === meta &&
-				hotkey.shift === shift
-			) {
-				const hotkeyName = hotkeyToName( hotkey );
-				new Notice( `Leader hotkey '${ hotkeyName }' is already in use` );
-				return false;
+	public isConflicting( presses: KeyPress[] ): boolean {
+		const keyMaps = this.matchKeymap( presses);
+		return keyMaps ? true : false;
+	}
+
+	public matchKeymap( presses : KeyPress[]): KeyMap[] {
+
+		const trie         = this.plugin.getTrie();
+		const matches = trie.bestMatch( presses );
+		return matches ? matches.leafValues() : [];
+	}
+
+	public addKeymap( keymap: KeyMap) : void {
+
+		writeConsole( `Adding keymap: ${ keymap.repr() }`);
+
+		const newHotkeys = [...this.currentKeymaps()].concat( keymap );
+
+		this.saveKeymap( newHotkeys);
+	}
+
+	public removeKeymap( positionId: number): void {
+
+		const currentHotkeys = this.currentKeymaps()
+		const toRemove = currentHotkeys[ positionId ];
+		writeConsole( `Removing keymap: ${ toRemove.repr() }`);
+
+
+		const newKeymap = []
+		for ( let i = 0; i < currentHotkeys.length; i++ ) {
+			if ( i !== positionId ) {
+				newKeymap.push( currentHotkeys[ i ] );
 			}
 		}
 
-		return true;
+		this.saveKeymap( newKeymap );
 	}
 
-	public deleteHotkeyFromSettings( existingHotkey: KeyMap ): void {
-		for ( let i = 0; i < this.plugin.settings.hotkeys.length; i++ ) {
-			const hotkey = this.plugin.settings.hotkeys[ i ];
-			if (
-				hotkey.key !== existingHotkey.key ||
-				hotkey.meta !== existingHotkey.meta ||
-				hotkey.shift !== existingHotkey.shift
-			) {
-				continue;
-			}
+	public updateKeymap( positionId: number, keyMap: KeyMap ): void {
 
-			console.debug(
-				`Removing leader-hotkey ${ hotkeyToName( existingHotkey ) } at index ${ i }`,
-			);
-			this.plugin.settings.hotkeys.splice( i, 1 );
-		}
-		this.plugin.saveData( this.plugin.settings );
+		writeConsole( `Updating keymap at position ${ positionId}: ${ keyMap.repr() }`);
+		const keyMaps           = [...this.currentKeymaps()];
+		keyMaps[ positionId ] = keyMap;
+		this.saveKeymap(keyMaps)
 	}
 
-	public updateHotkeyInSettings(
-		existingHotkey: KeyMap,
-		newKey: string,
-		meta: boolean,
-		shift: boolean,
-	): void {
-		for ( let i = 0; i < this.plugin.settings.hotkeys.length; i++ ) {
-			const hotkey = this.plugin.settings.hotkeys[ i ];
-			if (
-				hotkey.key !== existingHotkey.key ||
-				hotkey.meta !== existingHotkey.meta ||
-				hotkey.shift !== existingHotkey.shift
-			) {
-				continue;
-			}
+	private saveKeymap( keymaps : KeyMap[]) : void {
+		const keyMapString = keymaps.map( ( keymap) => keymap.repr()).join( '\n');
+		writeConsole( `Saving keymap: ${ keyMapString }`);
 
-			console.debug(
-				`Updating leader-hotkey ${ hotkeyToName(
-					existingHotkey,
-				) } at index ${ i } to ${ newKey }`,
-			);
-			hotkey.key   = newKey;
-			hotkey.meta  = meta;
-			hotkey.shift = shift;
-			break;
-		}
-		this.plugin.saveData( this.plugin.settings );
+		this.plugin.settings.hotkeys = keymaps;
+		this.plugin.saveData( this.plugin.settings )
+			.then( ( ) => {
+				//	todo: Notify.
+			})
+			.catch( err => {
+				// todo: notify
+			}) ;
 	}
 
-	public updateHotkeyCommandInSettings(
-		existingHotkey: KeyMap,
-		newCommand: string,
-	): void {
-		for ( let i = 0; i < this.plugin.settings.hotkeys.length; i++ ) {
-			const hotkey = this.plugin.settings.hotkeys[ i ];
-			if (
-				hotkey.key !== existingHotkey.key ||
-				hotkey.meta !== existingHotkey.meta ||
-				hotkey.shift !== existingHotkey.shift
-			) {
-				continue;
-			}
-
-			console.debug(
-				`Updating leader-hotkey command ${ hotkeyToName(
-					existingHotkey,
-				) } at index ${ i } to ${ newCommand }`,
-			);
-			hotkey.commandID = newCommand;
-			break;
-		}
-		this.plugin.saveData( this.plugin.settings );
+	private currentSettings(): SavedSettings {
+		return this.plugin.settings;
+	}
+	private currentKeymaps() : KeyMap[] {
+		return this.currentSettings().hotkeys;
 	}
 
-	private readonly storeNewHotkeyInSettings = (): void => {
-		console.debug(
-			`Adding leader-hotkey command ${ this.tempNewHotkey } to ${ this.tempNewHotkey.commandID }`,
-		);
-		this.plugin.settings.hotkeys.push( this.tempNewHotkey );
-		this.plugin.saveData( this.plugin.settings );
-		this.tempNewHotkey = newEmptyHotkey();
-	};
 }
 
 const newEmptyHotkey = (): KeyMap => ( {
@@ -968,6 +925,14 @@ export default class LeaderHotkeys extends Plugin {
 
 	public onunload(): void {
 		writeConsole( 'Unloading plugin.' );
+	}
+
+	public getTrie() : Trie< KeyMap> {
+		return this.trie;
+	}
+	public setTrie( trie: Trie< KeyMap> ) : void {
+		this.trie = trie;
+		this.matcher = new MatchMachine( this.trie );
 	}
 
 	private readonly handleKeyDown = ( event: KeyboardEvent ): void => {
@@ -1073,8 +1038,7 @@ export default class LeaderHotkeys extends Plugin {
 	private async _registerPeripheralUIElements(): Promise<void> {
 		writeConsole( 'Registering peripheral interface elements.' );
 
-		const leaderPluginSettingsTab = new LeaderSettingsTab( this.app, this );
-		this.addSettingTab( leaderPluginSettingsTab );
+		this.addSettingTab( new LeaderSettingsTab( this ) );
 		writeConsole( 'Registered Setting Tab.' );
 	}
 
