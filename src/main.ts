@@ -7,54 +7,21 @@ interface ObsidianCommand {
   id: string;
   name: string;
 }
-
 interface CommandMap {
   [key: string]: ObsidianCommand;
 }
-
-// interface ObsidianApp {
-//   // todo
-//   appId: string;
-//   account;
-//   commands;
-//   customCss;
-//   dom;
-//   dragManager;
-//   fileManager;
-//   foldManager;
-//   hotkeyManager;
-//   internalPlugins;
-//   isMobile;
-//   keymap;
-//   lastEvent;
-//   loadProgress;
-//   metadataCache;
-//   mobileToolbar;
-//   nextFrameEvents;
-//   nextFrameTimer;
-//   plugins;
-//   scope;
-//   setting;
-//   shareReceiver;
-//   statusBar;
-//   vault;
-//   viewRegistry;
-//   workspace;
-// }
-
 interface CustomCommand {
   key: string;
   modifiers: string[];
 }
 
-//
+
 type Optional<T> = T | undefined | null;
 interface StateMachine<K, T> {
-  // Would love to restrict T to a finite set ( T extends Enum),
-  // but it's not possible to do that in TypeScript
+  // Would love to restrict T to a finite set ( T extends Enum ),
+  // but it's not possible to do that in TypeScript currently
   advance: (event: K) => T;
 }
-
 // endregion
 
 // region Fundamental Domain
@@ -181,7 +148,6 @@ class KeyPress implements Hashable {
     return PressKind.NormalKey;
   };
 }
-
 class KeyMap implements Iterable<KeyPress> {
   public static of(keyMapLike: KeyMap): KeyMap {
     // FIXME : Theoretically possible to create a keymap without a commandID.
@@ -208,14 +174,12 @@ class KeyMap implements Iterable<KeyPress> {
     return this.commandID + ' = ' + this.sequence.map( press => press.text() ).join(' => ')
   };
 }
-
 interface KeyBinding {
   hotkeys: KeyMap[];
 }
 // endregion
 
 // region Matching of existing keymaps
-
 interface HashIter extends Iterable<Hashable> {}
 
 class TrieNode<T> {
@@ -317,7 +281,6 @@ enum MatchKind {
   PartialMatch,
   FullMatch,
 }
-
 enum MatchState {
   EmptyMatch,
   StartedMatch,
@@ -474,108 +437,142 @@ class MatchHandler {
     return matches ? matches.leafValues() : [];
   }
 }
-
 // endregion
 
-// region Registering of new keymaps
-enum RegistrationState {
-  NoKeys,
+// region Mapping of new keymaps
+enum MappingState {
+  EmptySequence,
   FirstKey,
   AddedKeys,
-  ContinuingMatching,
+  WaitingInput,
   DeletedKey,
   PendingAddition,
   PendingDeletion,
-  FinishedRegistering,
+  FinishedMapping,
 }
-class RegisterMachine implements StateMachine<KeyPress, RegistrationState> {
-  private currentState: RegistrationState;
+ enum MappingStateKind {
+  Mapping,
+   Pending,
+   Terminal
+ }
+ enum PendingChoice {
+   KeepLiteral,
+   DiscardLiteral,
+   DeletePrevious,
+   Finish,
+   Unknown
+ }
+
+class MappingMachine implements StateMachine<KeyPress, MappingState> {
+  private currentState: MappingState;
   private readonly currentSequence: KeyPress[];
 
   constructor() {
-    this.currentState = RegistrationState.NoKeys;
+    this.currentState = MappingState.EmptySequence;
     this.currentSequence = [];
   }
 
-  public readonly advance = (event: KeyPress): RegistrationState => {
-    const classification = event.kind();
+  public readonly advance = (keyPress: KeyPress): MappingState => {
+    const classification = keyPress.kind();
 
-    switch (this.currentState) {
-      case RegistrationState.NoKeys:
-      case RegistrationState.FirstKey:
-      case RegistrationState.ContinuingMatching:
-      case RegistrationState.DeletedKey:
-      case RegistrationState.AddedKeys:
-        if ( classification === PressKind.ModifierOnly) {
-          this.currentState = RegistrationState.ContinuingMatching;
-        } else if ( classification === PressKind.SpecialKey) {
-          this.currentSequence.push(event);
-          this.currentState =
-            event.key === 'Enter'
-              ? RegistrationState.PendingAddition
-              : RegistrationState.PendingDeletion;
-        } else {
-          this.currentSequence.push(event);
-          this.currentState =
-            this.currentSequence.length === 1
-              ? RegistrationState.FirstKey
-              : RegistrationState.AddedKeys;
-        }
-        return this.currentState;
+    if ( classification === PressKind.ModifierOnly) {
+      return
+    }
 
-      case RegistrationState.PendingDeletion:
-      case RegistrationState.PendingAddition:
-        if (event.key === 'Enter' && event.ctrl && event.alt) {
-          this.currentSequence.pop();
-          this.currentState = RegistrationState.FinishedRegistering;
-        } else if (event.key === 'Enter') {
-          this.currentState = RegistrationState.AddedKeys;
-        } else if (
-          event.key === 'Backspace' &&
-          this.currentState === RegistrationState.PendingAddition
-        ) {
-          // Just canceling the addition of a keymap.
-          this.currentSequence.pop();
-          this.currentState = RegistrationState.ContinuingMatching;
-        } else if (
-          event.key === 'Backspace' &&
-          this.currentState === RegistrationState.PendingDeletion
-        ) {
-          // Need to delete the signal AND the key that it pointed to.
-          this.currentSequence.pop();
-          this.currentSequence.pop();
-          this.currentState = RegistrationState.DeletedKey;
-        } else {
-          // Explicitly don't change the state.
-          // this.currentState = this.currentState
-          // Or so i would do, if my tooling didn't incessantly shout at me for doing it.
-        }
-        return this.currentState;
+    if ( this.currentState === MappingState.FinishedMapping) {
+      // Explicitly state that it can be re-started without loss.
+      this.currentState = MappingState.WaitingInput;
+      return this.advance(keyPress);
+    }
 
-      case RegistrationState.FinishedRegistering: {
-        this.currentState = RegistrationState.ContinuingMatching;
-        return this.advance(event);
+    if ( this.stateKind() === MappingStateKind.Pending ) {
+      const previousLiteral = this.currentSequence.pop()
+      const action = this.interpretAction( keyPress);
+
+      switch (  action ) {
+        case PendingChoice.KeepLiteral:
+          this.currentSequence.push( previousLiteral )
+          this.currentState = MappingState.AddedKeys;
+          break
+        case PendingChoice.DiscardLiteral:
+          this.currentState = MappingState.WaitingInput
+          break
+        case PendingChoice.DeletePrevious:
+          this.currentSequence.pop()
+          this.currentState = MappingState.DeletedKey
+          break
+        case PendingChoice.Finish:
+          this.currentState = MappingState.FinishedMapping
+          break
+        default:
+          break
       }
     }
+
+    this.currentSequence.push( keyPress)
+    if ( classification === PressKind.SpecialKey ) {
+        this.currentState = keyPress.key === 'Enter'
+                            ? MappingState.PendingAddition
+                            : MappingState.PendingDeletion;
+      } else {
+        this.currentState = this.currentSequence.length === 1
+                            ? MappingState.FirstKey
+                            : MappingState.AddedKeys;
+      }
+
+    return this.currentState
+
   };
 
+  public stateKind(): MappingStateKind {
+    if (this.currentState === MappingState.FinishedMapping) {
+      return MappingStateKind.Terminal;
+    }
+
+    const pendingStates = [ MappingState.PendingAddition ,
+                            MappingState.PendingDeletion ]
+
+    return pendingStates.includes( this.currentState  )
+           ? MappingStateKind.Pending
+           : MappingStateKind.Mapping
+
+
+  }
   public readonly presses = (): readonly KeyPress[] => {
     return this.currentSequence;
   };
   public readonly documentRepresentation = (): HTMLElement[] => {
     return this.presses().map((press) => press.kbd());
   };
+
+  private interpretAction( keypress: KeyPress) : PendingChoice {
+    if (keypress.ctrl && keypress.alt && keypress.key === 'Enter' ) {
+      return PendingChoice.Finish;
+    }
+    if ( keypress.key === 'Enter') {
+      return PendingChoice.KeepLiteral;
+    }
+    else if ( keypress.key === 'Backspace' && this.currentState === MappingState.PendingDeletion) {
+      return PendingChoice.DeletePrevious
+    }
+    else if ( keypress.key === 'Backspace' && this.currentState === MappingState.PendingAddition) {
+      return PendingChoice.DiscardLiteral
+    }
+    return PendingChoice.Unknown
+
+  }
 }
+
 class SequenceModal extends Modal {
   private readonly parent: LeaderSettingsTab;
-  private readonly registerMachine: RegisterMachine;
+  private readonly registerMachine: MappingMachine;
   private readonly commandId: string;
 
   constructor(parent: LeaderSettingsTab, commandId: string) {
     super(parent.app);
     this.parent = parent;
     this.commandId = commandId;
-    this.registerMachine = new RegisterMachine();
+    this.registerMachine = new MappingMachine();
   }
 
   public readonly onOpen = (): void => {
@@ -593,20 +590,20 @@ class SequenceModal extends Modal {
     const keyPress = KeyPress.fromEvent(event);
     const registerState = this.registerMachine.advance(keyPress);
     writeConsole(
-      `An keypress resulted in ${RegistrationState[registerState]} state.`,
+      `An keypress resulted in ${MappingState[registerState]} state.`,
     );
 
     switch (registerState) {
-      case RegistrationState.NoKeys:
-      case RegistrationState.ContinuingMatching:
-      case RegistrationState.FirstKey:
-      case RegistrationState.DeletedKey:
-      case RegistrationState.AddedKeys:
+      case MappingState.EmptySequence:
+      case MappingState.WaitingInput:
+      case MappingState.FirstKey:
+      case MappingState.DeletedKey:
+      case MappingState.AddedKeys:
         this.renderKeyPresses(this.registerMachine.documentRepresentation());
         return;
 
-      case RegistrationState.PendingDeletion:
-      case RegistrationState.PendingAddition:
+      case MappingState.PendingDeletion:
+      case MappingState.PendingAddition:
         {
           // Inplace mutation :(
           const elements = this.registerMachine.documentRepresentation();
@@ -622,7 +619,7 @@ class SequenceModal extends Modal {
           pressLiteral.style.opacity = '1';
 
           const discardOrRemoveWith =
-            registerState === RegistrationState.PendingAddition
+                    registerState === MappingState.PendingAddition
               ? 'If not, discard it with '
               : 'You can remove previous mapping it with ';
 
@@ -648,7 +645,7 @@ class SequenceModal extends Modal {
         }
         return;
 
-      case RegistrationState.FinishedRegistering:
+      case MappingState.FinishedMapping:
         const keyPresses = [...this.registerMachine.presses()];
         const conflicts = this.parent.conflicts(keyPresses);
         if (conflicts.length >= 1) {
