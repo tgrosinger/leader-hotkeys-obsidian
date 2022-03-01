@@ -1,4 +1,4 @@
-import { App, Modal, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Keymap, Modal, Plugin, PluginSettingTab, Scope, Setting } from 'obsidian';
 
 // region  Type Shims
 interface ObsidianCommand {
@@ -684,6 +684,7 @@ class LeaderSettingsTab extends PluginSettingTab {
     super(plugin.app, plugin);
     this.plugin = plugin;
     this.app = plugin.app;
+    this.commands = listCommands( this.app)
   }
 
   public display(): void {
@@ -704,7 +705,9 @@ class LeaderSettingsTab extends PluginSettingTab {
       });
     });
   }
-
+  public refreshCommands() : void {
+    this.commands = listCommands(this.app);
+  }
   public conflicts(keyPresses: KeyPress[]): KeyMap[] {
 
     return this.plugin.matchKeymap(keyPresses) || [];
@@ -805,7 +808,9 @@ class LeaderSettingsTab extends PluginSettingTab {
 }
 
 export default class LeaderHotkeys extends Plugin {
+
   public settings: SavedSettings;
+  private settingsTab: LeaderSettingsTab;
   private trie: Trie<KeyMap>;
   private matcher: MatchMachine;
 
@@ -815,7 +820,8 @@ export default class LeaderHotkeys extends Plugin {
     await this.loadSavedSettings();
     await this.registerEventsAndCallbacks();
 
-    this.addSettingTab(new LeaderSettingsTab(this));
+    this.settingsTab =  new LeaderSettingsTab( this);
+    this.addSettingTab( this.settingsTab);
     writeConsole('Registered Setting Tab.');
 
     writeConsole('Finished Loading.');
@@ -849,6 +855,9 @@ export default class LeaderHotkeys extends Plugin {
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    console.log( this.app.keymap );
+    console.log( this.app.scope );
+
     const keypress = KeyPress.fromEvent(event);
     const currentState = this.matcher.advance(keypress);
     switch (currentState) {
@@ -915,15 +924,18 @@ export default class LeaderHotkeys extends Plugin {
     this.registerDomEvent(workspaceContainer, 'keydown', this.handleKeyDown);
     writeConsole('Registered workspace "keydown" event callbacks.');
 
-    const leaderKeyCommand = {
-      id: 'leader',
-      name: 'Leader key',
+
+    const openModalCommand = {
+      id: 'register-modal' ,
+      name: 'Open Register Modal',
       callback: () => {
+        this.settingsTab.refreshCommands()
+        new CommandModal( this.settingsTab).open()
         //	need something here.
       },
     };
-    this.addCommand(leaderKeyCommand);
-    writeConsole('Registered LeaderKey Command');
+    this.addCommand(openModalCommand);
+    writeConsole('Registered open modal command');
   }
 
   private async loadSavedSettings(): Promise<void> {
@@ -944,9 +956,14 @@ export default class LeaderHotkeys extends Plugin {
 
     this.trie = Trie.from(this.settings.hotkeys);
     this.matcher = new MatchMachine(this.trie);
+
+    console.log( this.app.keymap );
+    console.log( this.app.scope );
+
   }
 
   private invoke(keymap: Optional<KeyMap>): void {
+
     if (keymap) {
       // todo remove any typing
       const app = this.app as any;
