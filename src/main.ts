@@ -318,7 +318,7 @@ enum MatchKind {
   FullMatch,
 }
 
-enum MatchStates {
+enum MatchState {
   EmptyMatch,
   StartedMatch,
   RetainedMatch,
@@ -326,34 +326,40 @@ enum MatchStates {
   SuccessMatch,
   InvalidMatch,
 }
-
-class MatchMachine implements StateMachine<KeyPress, MatchStates> {
+enum MatchStateKind {
+  Initial,
+  Flow,
+  Terminal
+}
+class MatchMachine implements StateMachine<KeyPress, MatchState> {
 
   private readonly trie: Trie<KeyMap>;
-  private currentState: MatchStates;
+  private currentState: MatchState;
   private currentSequence: KeyPress[];
   private currentMatches: KeyMap[];
 
   constructor(trie: Trie<KeyMap>) {
     this.trie = trie;
-    this.currentState = MatchStates.EmptyMatch;
+    this.currentState = MatchState.EmptyMatch;
     this.currentSequence = [];
     this.currentMatches = [];
   }
 
-  public advance = (keypress: KeyPress): MatchStates => {
+  public advance = (keypress: KeyPress): MatchState => {
     if ( keypress.kind() === PressKind.ModifierOnly) {
       return this.currentState
     }
 
-    if ( this.inTerminalState() ) {
-      this.currentState    = MatchStates.EmptyMatch;
+    const macroState = this.stateKind();
+    if ( macroState === MatchStateKind.Terminal ) {
+      // Reset and try again.
+      this.currentState    = MatchState.EmptyMatch;
       this.currentSequence = [];
       this.currentMatches  = [];
       return this.advance( keypress );
     }
 
-    const wasSearching = this.inPartialState()
+    const wasAlreadySearching = macroState === MatchStateKind.Flow
     this.currentSequence.push(keypress);
 
     const bestMatch = this.trie.bestMatch(this.currentSequence);
@@ -362,17 +368,20 @@ class MatchMachine implements StateMachine<KeyPress, MatchStates> {
 
     switch ( matchKind ) {
         case MatchKind.NoMatch :
-          this.currentState = wasSearching
-                              ? MatchStates.InvalidMatch
-                              : MatchStates.EmptyMatch;
+          this.currentState = wasAlreadySearching
+                              ? MatchState.InvalidMatch
+                              : MatchState.EmptyMatch;
           break
       case MatchKind.PartialMatch:
-        this.currentState = wasSearching
-                            ? MatchStates.ImprovedMatch
-                            : MatchStates.StartedMatch;
+        this.currentState = wasAlreadySearching
+                            ? MatchState.ImprovedMatch
+                            : MatchState.StartedMatch;
         break
       case MatchKind.FullMatch:
-        this.currentState = MatchStates.SuccessMatch;
+        this.currentState = wasAlreadySearching
+                            ? MatchState.SuccessMatch
+                            // Very sus to reach success state at first try.
+                            : MatchState.SuccessMatch;
         break
       }
 
@@ -387,7 +396,7 @@ class MatchMachine implements StateMachine<KeyPress, MatchStates> {
 
   public fullMatch = (): Optional<KeyMap> => {
     const numMatches = this.allMatches().length;
-    const isFullMatch = this.currentState === MatchStates.SuccessMatch;
+    const isFullMatch = this.currentState === MatchState.SuccessMatch;
 
     // Sanity checking.
     if (isFullMatch && numMatches !== 1) {
@@ -403,17 +412,22 @@ class MatchMachine implements StateMachine<KeyPress, MatchStates> {
     return null;
   };
 
-  private inTerminalState() : boolean {
-    return [ MatchStates.InvalidMatch , MatchStates.SuccessMatch].includes( this.currentState)
+  public stateKind = () : MatchStateKind => {
+    if ( this.currentState === MatchState.EmptyMatch ) {
+      return MatchStateKind.Initial
+    }
+
+    const flowStates = [ MatchState.StartedMatch,
+                         MatchState.RetainedMatch,
+                         MatchState.ImprovedMatch ]
+
+    return flowStates.includes( this.currentState)
+           ? MatchStateKind.Flow
+           : MatchStateKind.Terminal
+
   }
 
-  private inPartialState(): boolean {
-
-      return  [ MatchStates.StartedMatch, MatchStates.RetainedMatch, MatchStates.ImprovedMatch].includes( this.currentState)
-
-  }
 }
-
 class MatchHandler {
   private trie: Trie<KeyMap>;
   private machine: MatchMachine;
@@ -429,26 +443,25 @@ class MatchHandler {
     const currentState = this.machine.advance(keypress);
 
     switch (currentState) {
-      case MatchStates.EmptyMatch:
+      case MatchState.EmptyMatch:
         writeConsole(
-          `An keypress resulted in a ${MatchStates[currentState]} state.`,
+          `An keypress resulted in a ${MatchState[currentState]} state.`,
+        );
+        return;
+      case MatchState.RetainedMatch:
+      case MatchState.StartedMatch:
+      case MatchState.InvalidMatch:
+      case MatchState.ImprovedMatch:
+        event.preventDefault();
+        writeConsole(
+          `An keypress resulted in a ${MatchState[currentState]} state.`,
         );
         return;
 
-      case MatchStates.RetainedMatch:
-      case MatchStates.StartedMatch:
-      case MatchStates.InvalidMatch:
-      case MatchStates.ImprovedMatch:
+      case MatchState.SuccessMatch:
         event.preventDefault();
         writeConsole(
-          `An keypress resulted in a ${MatchStates[currentState]} state.`,
-        );
-        return;
-
-      case MatchStates.SuccessMatch:
-        event.preventDefault();
-        writeConsole(
-          `An keypress resulted in a ${MatchStates[currentState]} state.`,
+          `An keypress resulted in a ${MatchState[currentState]} state.`,
         );
         const keymap = this.machine.fullMatch();
         this.emit(keymap);
