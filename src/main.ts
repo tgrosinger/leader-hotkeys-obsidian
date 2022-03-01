@@ -994,7 +994,7 @@ export default class LeaderHotkeys extends Plugin {
 const listCommands = (app: App): ObsidianCommand[] => {
   // todo remove any type
   const anyApp = app as any;
-  const commands: CommandMap = anyApp.commands.commands;
+  const commands = anyApp.commands.commands as CommandMap;
   return Object.values(commands);
 };
 const defaultHotkeys: KeyMap[] = [
