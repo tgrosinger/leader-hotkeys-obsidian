@@ -448,7 +448,7 @@ enum RegisterMachineState {
 	AddedKeys,
 	RetainedKeys,
 	DeletedKey,
-	PendingConfirmation,
+	PendingAddition,
 	PendingDeletion,
 	FinishedRegistering,
 }
@@ -467,17 +467,6 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 
 		switch ( this.currentState ) {
 			case RegisterMachineState.NoKeys:
-				if ( classification === PressType.NoKey ) {
-					this.currentState = RegisterMachineState.RetainedKeys;
-				} else if ( classification === PressType.SpecialKey ) {
-					this.currentSequence.push( event );
-					this.currentState = RegisterMachineState.PendingConfirmation;
-				} else {
-					this.currentSequence.push( event );
-					this.currentState = RegisterMachineState.FirstKey;
-				}
-				return this.currentState;
-
 			case RegisterMachineState.FirstKey:
 			case RegisterMachineState.RetainedKeys:
 			case RegisterMachineState.DeletedKey:
@@ -485,25 +474,43 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 				if ( classification === PressType.NoKey ) {
 					this.currentState = RegisterMachineState.RetainedKeys;
 				} else if ( classification === PressType.SpecialKey ) {
-					this.currentSequence.push( event );
-					this.currentState = RegisterMachineState.PendingConfirmation;
+					this.currentSequence.push( event )
+					this.currentState = event.key === 'Enter'
+										? RegisterMachineState.PendingAddition
+										: RegisterMachineState.PendingDeletion;
 				} else {
 					this.currentSequence.push( event );
-					this.currentState = RegisterMachineState.AddedKeys;
+					this.currentState = this.currentSequence.length === 1
+										? RegisterMachineState.FirstKey
+										: RegisterMachineState.AddedKeys;
+
 				}
 				return this.currentState;
 
-			case RegisterMachineState.PendingConfirmation:
+			case RegisterMachineState.PendingDeletion:
 				if ( event.key === 'Enter' && event.ctrl && event.alt ) {
-					this.currentSequence.pop()
-					this.currentState = RegisterMachineState.FinishedRegistering;
-				} else if ( event.key === 'Enter' ) {
-					this.currentState = RegisterMachineState.AddedKeys;
-				} else if ( event.key === 'Backspace' ) {
 					this.currentSequence.pop();
+					this.currentState = RegisterMachineState.FinishedRegistering;
+				} else if ( event.key === 'Enter' ){
+					this.currentState = RegisterMachineState.AddedKeys;
+				}
+				else {
+					this.currentSequence.pop();
+					this.currentSequence.pop()
 					this.currentState = RegisterMachineState.DeletedKey;
-				} else {
-					this.currentState = RegisterMachineState.PendingConfirmation;
+				}
+				return this.currentState;
+
+			case RegisterMachineState.PendingAddition:
+				if ( event.key === 'Enter' && event.ctrl && event.alt ) {
+					this.currentSequence.pop();
+					this.currentState = RegisterMachineState.FinishedRegistering;
+				} else if ( event.key === 'Enter' ){
+					this.currentState = RegisterMachineState.AddedKeys;
+				}
+				else {
+					this.currentSequence.pop();
+					this.currentState = RegisterMachineState.RetainedKeys;
 				}
 				return this.currentState;
 
@@ -570,32 +577,54 @@ class KeymapRegisterer extends Modal {
 				this.renderKeyPresses( this.registerMachine.documentRepresentation() );
 				return;
 
-				case RegisterMachineState.PendingDeletion:
-			case RegisterMachineState.PendingConfirmation:
-			{
+			case RegisterMachineState.PendingDeletion: {
 				// Inplace mutation :(
-				const elements           = this.registerMachine.documentRepresentation()
-				const lastElement        = elements[ elements.length - 1 ];				
+				const elements            = this.registerMachine.documentRepresentation()
+				const lastElement         = elements[ elements.length - 1 ];
 				lastElement.style.opacity = '0.5'
 				this.renderKeyPresses( elements );
 
 
-
-
-
-				const backspace    = KeyPress.just( 'Backspace' ).elementRepresentation()
-				const enter        = KeyPress.just( 'Enter' ).elementRepresentation()
-				const ctrlAltEnter = KeyPress.ctrlAlt( 'Enter' ).elementRepresentation()
-				const pressLiteral = lastElement.cloneNode( true )
+				const backspace            = KeyPress.just( 'Backspace' ).elementRepresentation()
+				const enter                = KeyPress.just( 'Enter' ).elementRepresentation()
+				const ctrlAltEnter         = KeyPress.ctrlAlt( 'Enter' ).elementRepresentation()
+				const pressLiteral         = lastElement.cloneNode( true )
 				pressLiteral.style.opacity = '1'
-				
+
 				const confirmText = document.createElement( 'p' );
 				confirmText.append( 'Did you mean literal ', pressLiteral, '?',
-									document.createElement('br'),
+									document.createElement( 'br' ),
 									'If so, press ', enter, '.',
-									document.createElement('br'),
+									document.createElement( 'br' ),
 									'If not, discard it with ', backspace, '.',
-									document.createElement('br'),
+									document.createElement( 'br' ),
+									'If you wanted to complete, press ', ctrlAltEnter )
+
+
+				this.contentEl.append( confirmText );
+			}
+				return
+			case RegisterMachineState.PendingAddition: {
+				// Inplace mutation :(
+				const elements            = this.registerMachine.documentRepresentation()
+				const lastElement         = elements[ elements.length - 1 ];
+				lastElement.style.opacity = '0.5'
+				this.renderKeyPresses( elements );
+
+
+				const backspace            = KeyPress.just( 'Backspace' ).elementRepresentation()
+				const enter                = KeyPress.just( 'Enter' ).elementRepresentation()
+				const ctrlAltEnter         = KeyPress.ctrlAlt( 'Enter' ).elementRepresentation()
+				const pressLiteral         = lastElement.cloneNode( true )
+				pressLiteral.style.opacity = '1'
+
+				const confirmText = document.createElement( 'p' );
+				confirmText.append( 'Did you mean literal ', pressLiteral, '?',
+									document.createElement( 'br' ),
+									'If so, press ', enter, '.',
+									document.createElement( 'br' ),
+									'If not, discard it with ', backspace, '.',
+									document.createElement( 'br' ),
 									'If you wanted to complete, press ', ctrlAltEnter )
 
 
@@ -605,7 +634,7 @@ class KeymapRegisterer extends Modal {
 
 			case RegisterMachineState.FinishedRegistering:
 				const keyPresses = [ ...this.registerMachine.presses() ];
-				const conflicts = this.parent.conflicts( keyPresses );
+				const conflicts  = this.parent.conflicts( keyPresses );
 				if ( conflicts.length > 0 ) {
 					this.setText(
 						'This sequence conflicts with other sequences [ . . . ] . Please try again.',
