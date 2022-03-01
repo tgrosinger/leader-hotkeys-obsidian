@@ -1,13 +1,4 @@
-import {
-  App,
-  Keymap,
-  Modal,
-  Notice,
-  Plugin,
-  PluginSettingTab,
-  Scope,
-  Setting,
-} from 'obsidian';
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, } from 'obsidian';
 
 // region  Type Shims
 interface ObsidianCommand {
@@ -67,106 +58,6 @@ interface StateMachine<K, T> {
   // Would love to restrict T to a finite set ( T extends Enum),
   // but it's not possible to do that in TypeScript
   advance: (event: K) => T;
-}
-
-// endregion
-
-// region Trie
-interface HashIter extends Iterable<Hashable> {}
-
-class TrieNode<T> {
-  public children = new Map<string, TrieNode<T>>();
-
-  public value: Optional<T>;
-
-  public child(key: string): Optional<TrieNode<T>> {
-    return this.children.get(key);
-  }
-
-  public addChild(key: string, child: TrieNode<T>): void {
-    this.value = null;
-    this.children.set(key, child);
-  }
-
-  public leaves(): TrieNode<T>[] {
-    if (this.isLeaf()) {
-      return [this];
-    }
-
-    let result: TrieNode<T>[] = [];
-
-    this.children.forEach((child, key) => {
-      result = result.concat(child.leaves());
-    });
-
-    return result;
-  }
-
-  public leafValues(): T[] {
-    return this.leaves().map((node) => node.value);
-  }
-
-  public isLeaf(): boolean {
-    return this.children.size === 0;
-  }
-
-  public setValue(value: T): void {
-    this.value = value;
-  }
-}
-
-class Trie<T extends HashIter> {
-  public static from<K extends HashIter>(iter: K[]): Trie<K> {
-    const trie = new Trie<K>();
-    trie.addAll(iter);
-    return trie;
-  }
-
-  private readonly root: TrieNode<T>;
-
-  constructor() {
-    this.root = new TrieNode();
-  }
-
-  public addAll(iter: T[]): Trie<T> {
-    for (const item of iter) {
-      this.add(item);
-    }
-    return this;
-  }
-
-  public add(composite: T): Trie<T> {
-    let lastSeenNode = this.root;
-    for (const component of composite) {
-      const key = component.serialize();
-      const child = lastSeenNode.child(key) || new TrieNode();
-      lastSeenNode.addChild(key, child);
-      lastSeenNode = child;
-    }
-    if (lastSeenNode.value !== undefined) {
-      throw new Error('Duplicate keymap');
-    }
-    lastSeenNode.setValue(composite);
-    return this;
-  }
-
-  public bestMatch(sequence: Hashable[]): Optional<TrieNode<T>> {
-    let lastNode = this.root;
-    for (const keyPress of sequence) {
-      const key = keyPress.serialize();
-      const child = lastNode.child(key);
-      if (!child) {
-        return null;
-      }
-      lastNode = child;
-    }
-
-    return lastNode;
-  }
-
-  public contains(sequence: Hashable[]): boolean {
-    return this.bestMatch(sequence) !== null;
-  }
 }
 
 // endregion
@@ -338,13 +229,110 @@ interface SavedSettings {
 
 // region Matching of existing keymaps
 
+interface HashIter extends Iterable<Hashable> {}
+
+class TrieNode<T> {
+  public children = new Map<string, TrieNode<T>>();
+
+  public value: Optional<T>;
+
+  public child(key: string): Optional<TrieNode<T>> {
+    return this.children.get(key);
+  }
+
+  public addChild(key: string, child: TrieNode<T>): void {
+    this.value = null;
+    this.children.set(key, child);
+  }
+
+  public leaves(): TrieNode<T>[] {
+    if (this.isLeaf()) {
+      return [this];
+    }
+
+    let result: TrieNode<T>[] = [];
+
+    this.children.forEach((child, _) => {
+      result = result.concat(child.leaves());
+    });
+
+    return result;
+  }
+
+  public leafValues(): T[] {
+    return this.leaves().map((node) => node.value);
+  }
+
+  public isLeaf(): boolean {
+    return this.children.size === 0;
+  }
+
+  public setValue(value: T): void {
+    this.value = value;
+  }
+}
+
+class Trie<T extends HashIter> {
+  public static from<K extends HashIter>(iter: K[]): Trie<K> {
+    const trie = new Trie<K>();
+    trie.addAll(iter);
+    return trie;
+  }
+
+  private readonly root: TrieNode<T>;
+
+  constructor() {
+    this.root = new TrieNode();
+  }
+
+  public addAll(iter: T[]): Trie<T> {
+    for (const item of iter) {
+      this.add(item);
+    }
+    return this;
+  }
+
+  public add(composite: T): Trie<T> {
+    let lastSeenNode = this.root;
+    for (const component of composite) {
+      const key = component.serialize();
+      const child = lastSeenNode.child(key) || new TrieNode();
+      lastSeenNode.addChild(key, child);
+      lastSeenNode = child;
+    }
+    if (lastSeenNode.value !== undefined) {
+      throw new Error('Duplicate keymap');
+    }
+    lastSeenNode.setValue(composite);
+    return this;
+  }
+
+  public bestMatch(sequence: Hashable[]): Optional<TrieNode<T>> {
+    let lastNode = this.root;
+    for (const keyPress of sequence) {
+      const key = keyPress.serialize();
+      const child = lastNode.child(key);
+      if (!child) {
+        return null;
+      }
+      lastNode = child;
+    }
+
+    return lastNode;
+  }
+
+  public contains(sequence: Hashable[]): boolean {
+    return this.bestMatch(sequence) !== null;
+  }
+}
+
 enum MatchType {
   NoMatch,
   PartialMatch,
   FullMatch,
 }
 
-enum MatchMachineState {
+enum MatchStates {
   NoMatch,
   StartedMatch,
   RetainedMatch,
@@ -353,7 +341,7 @@ enum MatchMachineState {
   InvalidMatch,
 }
 
-class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
+class MatchMachine implements StateMachine<KeyPress, MatchStates> {
   private static classify(bestMatch: Optional<TrieNode<KeyMap>>): MatchType {
     if (!bestMatch) {
       return MatchType.NoMatch;
@@ -365,18 +353,18 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
   }
 
   private readonly trie: Trie<KeyMap>;
-  private currentState: MatchMachineState;
+  private currentState: MatchStates;
   private currentSequence: KeyPress[];
   private currentMatches: KeyMap[];
 
   constructor(trie: Trie<KeyMap>) {
     this.trie = trie;
-    this.currentState = MatchMachineState.NoMatch;
+    this.currentState = MatchStates.NoMatch;
     this.currentSequence = [];
     this.currentMatches = [];
   }
 
-  public advance = (keypress: KeyPress): MatchMachineState => {
+  public advance = (keypress: KeyPress): MatchStates => {
     this.currentSequence.push(keypress);
 
     const bestMatch = this.trie.bestMatch(this.currentSequence);
@@ -386,36 +374,36 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
 
     switch (this.currentState) {
       // Start Matching
-      case MatchMachineState.NoMatch:
+      case MatchStates.NoMatch:
         if (matchType === MatchType.NoMatch) {
           this.currentSequence.pop();
-          this.currentState = MatchMachineState.NoMatch;
+          this.currentState = MatchStates.NoMatch;
         } else if (matchType === MatchType.FullMatch) {
           // Suspicious to have a full match here.
-          this.currentState = MatchMachineState.SuccessMatch;
+          this.currentState = MatchStates.SuccessMatch;
         } else {
-          this.currentState = MatchMachineState.StartedMatch;
+          this.currentState = MatchStates.StartedMatch;
         }
         return this.currentState;
       // Continue / Finish Matching
-      case MatchMachineState.StartedMatch:
-      case MatchMachineState.RetainedMatch:
-      case MatchMachineState.ImprovedMatch:
+      case MatchStates.StartedMatch:
+      case MatchStates.RetainedMatch:
+      case MatchStates.ImprovedMatch:
         if (keypress.classification() === PressType.NoKey) {
           this.currentSequence.pop();
-          this.currentState = MatchMachineState.RetainedMatch;
+          this.currentState = MatchStates.RetainedMatch;
         } else if (matchType === MatchType.NoMatch) {
-          this.currentState = MatchMachineState.InvalidMatch;
+          this.currentState = MatchStates.InvalidMatch;
         } else if (matchType === MatchType.FullMatch) {
-          this.currentState = MatchMachineState.SuccessMatch;
+          this.currentState = MatchStates.SuccessMatch;
         } else {
-          this.currentState = MatchMachineState.ImprovedMatch;
+          this.currentState = MatchStates.ImprovedMatch;
         }
         return this.currentState;
       // Clear previous matching and rematch
-      case MatchMachineState.SuccessMatch:
-      case MatchMachineState.InvalidMatch:
-        this.currentState = MatchMachineState.NoMatch;
+      case MatchStates.SuccessMatch:
+      case MatchStates.InvalidMatch:
+        this.currentState = MatchStates.NoMatch;
         this.currentSequence = [];
         this.currentMatches = [];
         return this.advance(keypress);
@@ -428,7 +416,7 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
 
   public fullMatch = (): Optional<KeyMap> => {
     const numMatches = this.allMatches().length;
-    const isFullMatch = this.currentState === MatchMachineState.SuccessMatch;
+    const isFullMatch = this.currentState === MatchStates.SuccessMatch;
 
     // Sanity checking.
     if (isFullMatch && numMatches !== 1) {
@@ -445,11 +433,72 @@ class MatchMachine implements StateMachine<KeyPress, MatchMachineState> {
   };
 }
 
+class MatchHandler {
+  private trie: Trie<KeyMap>;
+  private machine: MatchMachine;
+  private readonly parent: LeaderHotkeys;
+
+  public constructor(parent: LeaderHotkeys) {
+    this.parent = parent;
+    this.setKeymap(parent.settings.hotkeys);
+  }
+
+  public readonly handleKeyDown = (event: KeyboardEvent): void => {
+    const keypress = KeyPress.fromEvent(event);
+    const currentState = this.machine.advance(keypress);
+
+    switch (currentState) {
+      case MatchStates.NoMatch:
+        writeConsole(
+          `An keypress resulted in a ${MatchStates[currentState]} state.`,
+        );
+        return;
+
+      case MatchStates.RetainedMatch:
+      case MatchStates.StartedMatch:
+      case MatchStates.InvalidMatch:
+      case MatchStates.ImprovedMatch:
+        event.preventDefault();
+        writeConsole(
+          `An keypress resulted in a ${MatchStates[currentState]} state.`,
+        );
+        return;
+
+      case MatchStates.SuccessMatch:
+        event.preventDefault();
+        writeConsole(
+          `An keypress resulted in a ${MatchStates[currentState]} state.`,
+        );
+        const keymap = this.machine.fullMatch();
+        this.emit(keymap);
+        return;
+    }
+  };
+
+  public emit(keymap: Optional<KeyMap>): void {
+    if (!keymap) {
+      writeConsole(
+        'Fully matched an prefix, but without a corresponding Keymap. This is definitely a bug.',
+      );
+    }
+    this.parent.invokeCommand(keymap.commandID);
+  }
+
+  public setKeymap(keymaps: KeyMap[]): void {
+    this.trie = Trie.from(keymaps);
+    this.machine = new MatchMachine(this.trie);
+  }
+
+  public findMatchingKeymaps(presses: KeyPress[]): KeyMap[] {
+    const matches = this.trie.bestMatch(presses);
+    return matches ? matches.leafValues() : [];
+  }
+}
+
 // endregion
 
 // region Registering of new keymaps
-
-enum RegisterMachineState {
+enum RegistrationState {
   NoKeys,
   FirstKey,
   AddedKeys,
@@ -459,72 +508,72 @@ enum RegisterMachineState {
   PendingDeletion,
   FinishedRegistering,
 }
-
-class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
-  private currentState: RegisterMachineState;
-  private currentSequence: KeyPress[];
+class RegisterMachine implements StateMachine<KeyPress, RegistrationState> {
+  private currentState: RegistrationState;
+  private readonly currentSequence: KeyPress[];
 
   constructor() {
-    this.currentState = RegisterMachineState.NoKeys;
+    this.currentState = RegistrationState.NoKeys;
     this.currentSequence = [];
   }
 
-  public readonly advance = (event: KeyPress): RegisterMachineState => {
+  public readonly advance = (event: KeyPress): RegistrationState => {
     const classification = event.classification();
 
     switch (this.currentState) {
-      case RegisterMachineState.NoKeys:
-      case RegisterMachineState.FirstKey:
-      case RegisterMachineState.ContinuingMatching:
-      case RegisterMachineState.DeletedKey:
-      case RegisterMachineState.AddedKeys:
+      case RegistrationState.NoKeys:
+      case RegistrationState.FirstKey:
+      case RegistrationState.ContinuingMatching:
+      case RegistrationState.DeletedKey:
+      case RegistrationState.AddedKeys:
         if (classification === PressType.NoKey) {
-          this.currentState = RegisterMachineState.ContinuingMatching;
+          this.currentState = RegistrationState.ContinuingMatching;
         } else if (classification === PressType.SpecialKey) {
           this.currentSequence.push(event);
           this.currentState =
             event.key === 'Enter'
-              ? RegisterMachineState.PendingAddition
-              : RegisterMachineState.PendingDeletion;
+              ? RegistrationState.PendingAddition
+              : RegistrationState.PendingDeletion;
         } else {
           this.currentSequence.push(event);
           this.currentState =
             this.currentSequence.length === 1
-              ? RegisterMachineState.FirstKey
-              : RegisterMachineState.AddedKeys;
+              ? RegistrationState.FirstKey
+              : RegistrationState.AddedKeys;
         }
         return this.currentState;
 
-      case RegisterMachineState.PendingDeletion:
-      case RegisterMachineState.PendingAddition:
+      case RegistrationState.PendingDeletion:
+      case RegistrationState.PendingAddition:
         if (event.key === 'Enter' && event.ctrl && event.alt) {
           this.currentSequence.pop();
-          this.currentState = RegisterMachineState.FinishedRegistering;
+          this.currentState = RegistrationState.FinishedRegistering;
         } else if (event.key === 'Enter') {
-          this.currentState = RegisterMachineState.AddedKeys;
+          this.currentState = RegistrationState.AddedKeys;
         } else if (
-          event.key === 'Backspace' &&
-          this.currentState === RegisterMachineState.PendingAddition
+            event.key === 'Backspace' &&
+            this.currentState === RegistrationState.PendingAddition
         ) {
           // Just canceling the addition of a keymap.
           this.currentSequence.pop();
-          this.currentState = RegisterMachineState.ContinuingMatching;
+          this.currentState = RegistrationState.ContinuingMatching;
         } else if (
-          event.key === 'Backspace' &&
-          this.currentState === RegisterMachineState.PendingDeletion
+            event.key === 'Backspace' &&
+            this.currentState === RegistrationState.PendingDeletion
         ) {
           // Need to delete the signal AND the key that it pointed to.
           this.currentSequence.pop();
           this.currentSequence.pop();
-          this.currentState = RegisterMachineState.DeletedKey;
+          this.currentState = RegistrationState.DeletedKey;
         } else {
-			// Explicitly don't change the state.
-          this.currentState = this.currentState;
+          // Explicitly don't change the state.
+          // this.currentState = this.currentState
+          // Or so i would do, if my tooling didn't incessantly shout at me for doing it.
         }
         return this.currentState;
 
-      case RegisterMachineState.FinishedRegistering: {
-        this.currentState = RegisterMachineState.ContinuingMatching;
+      case RegistrationState.FinishedRegistering: {
+        this.currentState = RegistrationState.ContinuingMatching;
         return this.advance(event);
       }
     }
@@ -536,10 +585,8 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
   public readonly documentRepresentation = (): HTMLElement[] => {
     return this.presses().map((press) => press.elementRepresentation());
   };
-
 }
-
-class KeymapRegisterer extends Modal {
+class SequenceModal extends Modal {
   private readonly parent: LeaderSettingsTab;
   private readonly registerMachine: RegisterMachine;
   private readonly commandId: string;
@@ -566,20 +613,20 @@ class KeymapRegisterer extends Modal {
     const keyPress = KeyPress.fromEvent(event);
     const registerState = this.registerMachine.advance(keyPress);
     writeConsole(
-      `An keypress resulted in ${RegisterMachineState[registerState]} state.`,
+      `An keypress resulted in ${RegistrationState[registerState]} state.`,
     );
 
     switch (registerState) {
-      case RegisterMachineState.NoKeys:
-      case RegisterMachineState.ContinuingMatching:
-      case RegisterMachineState.FirstKey:
-      case RegisterMachineState.DeletedKey:
-      case RegisterMachineState.AddedKeys:
+      case RegistrationState.NoKeys:
+      case RegistrationState.ContinuingMatching:
+      case RegistrationState.FirstKey:
+      case RegistrationState.DeletedKey:
+      case RegistrationState.AddedKeys:
         this.renderKeyPresses(this.registerMachine.documentRepresentation());
         return;
 
-      case RegisterMachineState.PendingDeletion:
-      case RegisterMachineState.PendingAddition:
+      case RegistrationState.PendingDeletion:
+      case RegistrationState.PendingAddition:
         {
           // Inplace mutation :(
           const elements = this.registerMachine.documentRepresentation();
@@ -589,42 +636,50 @@ class KeymapRegisterer extends Modal {
 
           const backspace = KeyPress.just('Backspace').elementRepresentation();
           const enter = KeyPress.just('Enter').elementRepresentation();
-          const ctrlAltEnter = KeyPress.ctrlAlt('Enter').elementRepresentation();
-          const pressLiteral = lastElement.cloneNode(true);
+          const ctrlAltEnter =
+            KeyPress.ctrlAlt('Enter').elementRepresentation();
+          const pressLiteral = lastElement.cloneNode(true) as HTMLElement;
           pressLiteral.style.opacity = '1';
 
-		  const discardOrRemoveWith = registerState === RegisterMachineState.PendingAddition
-									 ? 'If not, discard it with '
-									 : 'You can remove previous mapping it with '
+          const discardOrRemoveWith =
+                    registerState === RegistrationState.PendingAddition
+              ? 'If not, discard it with '
+              : 'You can remove previous mapping it with ';
 
-		  const confirmText = document.createElement('p');
-		  confirmText.append(
-				'Did you mean literal ', pressLiteral, '?',
-				document.createElement('br'),
-				'If so, press ', enter, '.',
-				document.createElement('br'),
-				discardOrRemoveWith, backspace, '.',
-				document.createElement('br'),
-				'If you wanted to complete, press ', ctrlAltEnter,
-			)
+          const confirmText = document.createElement('p');
+          confirmText.append(
+            'Did you mean literal ',
+            pressLiteral,
+            '?',
+            document.createElement('br'),
+            'If so, press ',
+            enter,
+            '.',
+            document.createElement('br'),
+            discardOrRemoveWith,
+            backspace,
+            '.',
+            document.createElement('br'),
+            'If you wanted to complete, press ',
+            ctrlAltEnter,
+          );
 
           this.contentEl.append(confirmText);
         }
         return;
 
-      case RegisterMachineState.FinishedRegistering:
+      case RegistrationState.FinishedRegistering:
         const keyPresses = [...this.registerMachine.presses()];
         const conflicts = this.parent.conflicts(keyPresses);
         if (conflicts.length >= 1) {
-			// todo handle this properly
-				new Notice("There are conflicts with your keyPresses!")
+          // todo handle this properly
+          new Notice('There are conflicts with your keyPresses!');
         } else {
           const keymap = new KeyMap(this.commandId, keyPresses);
           this.parent.addKeymap(keymap);
           new Notice(
-            `Command  ${
-              this.commandId
-            } can now be invoked by ${keymap.sequenceRepr()}`,
+            `Command  ${ this.commandId } 
+            can now be invoked by ${keymap.sequenceRepr()}`,
           );
           this.close();
         }
@@ -646,12 +701,7 @@ class KeymapRegisterer extends Modal {
     this.contentEl.appendChild(header);
     this.contentEl.appendChild(introText);
   };
-
-
 }
-
-// endregion
-
 class CommandModal extends Modal {
   private readonly parent: LeaderSettingsTab;
   private commandId: string;
@@ -688,21 +738,23 @@ class CommandModal extends Modal {
       button.setButtonText('OK');
       button.onClick(() => {
         if (
-          this.commandId === null ||
-          this.commandId === undefined ||
-          this.commandId === ''
+            this.commandId === null ||
+            this.commandId === undefined ||
+            this.commandId === ''
         ) {
           new Notice('Select a command to register');
           return;
         }
 
-        const registerer = new KeymapRegisterer(this.parent, this.commandId);
+        const registerer = new SequenceModal(this.parent, this.commandId);
         registerer.open();
         this.close();
       });
     });
   }
 }
+// endregion
+
 
 class LeaderSettingsTab extends PluginSettingTab {
   public commands: ObsidianCommand[];
@@ -738,7 +790,7 @@ class LeaderSettingsTab extends PluginSettingTab {
   }
 
   public conflicts(keyPresses: KeyPress[]): KeyMap[] {
-    return this.plugin.matchKeymap(keyPresses) || [];
+    return this.plugin.findMatchingKeymaps(keyPresses) || [];
   }
 
   public obsidianCommands(): ObsidianCommand[] {
@@ -778,7 +830,7 @@ class LeaderSettingsTab extends PluginSettingTab {
   }
 
   private saveKeymap(keymaps: KeyMap[]): void {
-    this.plugin.saveKeymaps(keymaps);
+    this.plugin.persistKeymaps(keymaps);
   }
 
   private displayExisting(positionId: number): void {
@@ -821,8 +873,8 @@ class LeaderSettingsTab extends PluginSettingTab {
     );
     keySetter.append(...kbds);
 
-    keySetter.addEventListener('click', (e: Event) =>
-      new KeymapRegisterer(this, thisKeymap.commandID).open(),
+    keySetter.addEventListener('click', (_: Event) =>
+      new SequenceModal(this, thisKeymap.commandID).open(),
     );
 
     settingControl.insertBefore(keySetter, settingControl.children[0]);
@@ -841,138 +893,103 @@ class LeaderSettingsTab extends PluginSettingTab {
     return this.currentSettings().hotkeys;
   }
 }
-
 export default class LeaderHotkeys extends Plugin {
   public settings: SavedSettings;
   private settingsTab: LeaderSettingsTab;
-  private trie: Trie<KeyMap>;
-  private matcher: MatchMachine;
+  private matchHandler: MatchHandler;
 
   public async onload(): Promise<void> {
-    writeConsole('Started Loading.');
+    writeConsole( 'Started Loading.' );
 
     await this.loadSavedSettings();
     await this.registerEventsAndCallbacks();
 
-    this.settingsTab = new LeaderSettingsTab(this);
-    this.addSettingTab(this.settingsTab);
-    writeConsole('Registered Setting Tab.');
+    this.settingsTab = new LeaderSettingsTab( this );
+    this.addSettingTab( this.settingsTab );
+    writeConsole( 'Registered Setting Tab.' );
 
-    writeConsole('Finished Loading.');
+    writeConsole( 'Finished Loading.' );
   }
 
   public onunload(): void {
-    writeConsole('Unloading plugin.');
+    writeConsole( 'Unloading plugin.' );
   }
 
-  public matchKeymap(presses: KeyPress[]): KeyMap[] {
-    const matches = this.trie.bestMatch(presses);
-    return matches ? matches.leafValues() : [];
-  }
-
-  public saveKeymaps(keymaps: KeyMap[]): void {
-    const keyMapString = keymaps.map((keymap) => keymap.fullRepr()).join('\n');
-    writeConsole(`Saving keymap: ${keyMapString}`);
-
-    this.settings.hotkeys = keymaps;
-    this.saveData(this.settings)
-      .then(() => {
-        new Notice('Successfully Saved keymaps.');
-        // todo notify
-      })
-      .catch(() => {
-        new Notice('Error while Saving Keymaps.');
-        //	todo notify
-      });
-
-    this.trie = Trie.from(keymaps);
-    this.matcher = new MatchMachine(this.trie);
-  }
-
-  private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    const keypress = KeyPress.fromEvent(event);
-    const currentState = this.matcher.advance(keypress);
-    switch (currentState) {
-      case MatchMachineState.NoMatch:
-        writeConsole(
-          `An keypress resulted in a ${MatchMachineState[currentState]} state.`,
-        );
-        return;
-
-      case MatchMachineState.RetainedMatch:
-      case MatchMachineState.StartedMatch:
-      case MatchMachineState.InvalidMatch:
-      case MatchMachineState.ImprovedMatch:
-        event.preventDefault();
-        writeConsole(
-          `An keypress resulted in a ${MatchMachineState[currentState]} state.`,
-        );
-        return;
-
-      case MatchMachineState.SuccessMatch:
-        event.preventDefault();
-        writeConsole(
-          `An keypress resulted in a ${MatchMachineState[currentState]} state.`,
-        );
-        const keymap = this.matcher.fullMatch();
-        this.invoke(keymap);
-        return;
+  public invokeCommand( commandID: string ): void {
+    if ( commandID ) {
+      // todo remove any typing
+      const app = this.app as any;
+      app.commands.executeCommandById( commandID );
     }
-  };
+  }
+
+  public findMatchingKeymaps( presses: KeyPress[] ): KeyMap[] {
+    return this.matchHandler.findMatchingKeymaps( presses );
+  }
+
+  public persistKeymaps( newKeymaps: KeyMap[] ): void {
+
+    this.saveData( newKeymaps )
+        .then( () => {
+          new Notice( 'Successfully Saved keymaps.' );
+          this.settings.hotkeys = newKeymaps;
+          this.matchHandler.setKeymap( newKeymaps );
+        } )
+        .catch( () => {
+          new Notice( 'Error while Saving Keymaps.' );
+        } );
+
+
+  }
 
   private async registerEventsAndCallbacks(): Promise<void> {
-    writeConsole('Registering necessary event callbacks');
+    writeConsole( 'Registering necessary event callbacks' );
 
     const workspaceContainer = this.app.workspace.containerEl;
-    this.registerDomEvent(workspaceContainer, 'keydown', this.handleKeyDown);
-    writeConsole('Registered workspace "keydown" event callbacks.');
+    this.registerDomEvent(
+        workspaceContainer,
+        'keydown',
+        this.matchHandler.handleKeyDown,
+    );
+    writeConsole( 'Registered workspace "keydown" event callbacks.' );
+
 
     const openModalCommand = {
-      id: 'register-modal',
-      name: 'Open Register Modal',
+      id:       'register-modal',
+      name:     'Open Register Modal',
       callback: () => {
         this.settingsTab.refreshCommands();
-        new CommandModal(this.settingsTab).open();
+        new CommandModal( this.settingsTab ).open();
         //	need something here.
       },
     };
-    this.addCommand(openModalCommand);
-    writeConsole('Registered open modal command');
+    this.addCommand( openModalCommand );
+    writeConsole( 'Registered open modal command' );
   }
 
   private async loadSavedSettings(): Promise<void> {
-    writeConsole('Loading previously saved settings.');
+    writeConsole( 'Loading previously saved settings.' );
 
-    const savedSettings = await this.loadData();
-
-    if (savedSettings) {
-      writeConsole('Successfully loaded previous settings.');
-    } else {
-      writeConsole(
-        'No saved settings were found, default ones will be used instead.',
-      );
+    
+    const savedSettings = await this.loadData()
+    try {
+      writeConsole( 'Successfully loaded previous settings.' );
+      savedSettings.hotkeys = this.settings.hotkeys.map( KeyMap.of );
+      this.settings        = savedSettings
+      this.matchHandler     = new MatchHandler( this );
+    } catch ( Exception ) {
+      writeConsole( 'A failure occured while loading the saved settings.' );
+      createNotice( 'A failure occured while loading the saved settings.' )
+      // todo : Retrocompatibility?
+      //  Harder than i thought since LeaderKey isn't saved here.
+      //  Would need to keep the old command ,
+      //  lookup the binding and convert it to the new one.
+      
+      this.settings = defaultSettings
     }
 
-    this.settings = savedSettings || defaultSettings;
-    this.settings.hotkeys = this.settings.hotkeys.map(KeyMap.of);
-
-    this.trie = Trie.from(this.settings.hotkeys);
-    this.matcher = new MatchMachine(this.trie);
-  }
-
-  private invoke(keymap: Optional<KeyMap>): void {
-    if (keymap) {
-      // todo remove any typing
-      const app = this.app as any;
-      app.commands.executeCommandById(keymap.commandID);
-    } else {
-      writeConsole(
-        'No keymap found for the full match. This is definitely a bug.',
-      );
-    }
   }
 }
-
 const listCommands = (app: App): ObsidianCommand[] => {
   // todo remove any type
   const anyApp = app as any;
@@ -1008,3 +1025,6 @@ const defaultSettings: SavedSettings = {
 const writeConsole = (message: string): void => {
   console.debug(` Leader Hotkeys: ${message}`);
 };
+const createNotice = ( message : string )  : void => {
+  new Notice( 'Leader Hotkeys: ' + message)
+}
