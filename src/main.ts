@@ -1,4 +1,11 @@
-import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, } from 'obsidian';
+import {
+  App,
+  Modal,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+} from 'obsidian';
 
 // region  Type Shims
 interface ObsidianCommand {
@@ -551,15 +558,15 @@ class RegisterMachine implements StateMachine<KeyPress, RegistrationState> {
         } else if (event.key === 'Enter') {
           this.currentState = RegistrationState.AddedKeys;
         } else if (
-            event.key === 'Backspace' &&
-            this.currentState === RegistrationState.PendingAddition
+          event.key === 'Backspace' &&
+          this.currentState === RegistrationState.PendingAddition
         ) {
           // Just canceling the addition of a keymap.
           this.currentSequence.pop();
           this.currentState = RegistrationState.ContinuingMatching;
         } else if (
-            event.key === 'Backspace' &&
-            this.currentState === RegistrationState.PendingDeletion
+          event.key === 'Backspace' &&
+          this.currentState === RegistrationState.PendingDeletion
         ) {
           // Need to delete the signal AND the key that it pointed to.
           this.currentSequence.pop();
@@ -642,7 +649,7 @@ class SequenceModal extends Modal {
           pressLiteral.style.opacity = '1';
 
           const discardOrRemoveWith =
-                    registerState === RegistrationState.PendingAddition
+            registerState === RegistrationState.PendingAddition
               ? 'If not, discard it with '
               : 'You can remove previous mapping it with ';
 
@@ -678,7 +685,7 @@ class SequenceModal extends Modal {
           const keymap = new KeyMap(this.commandId, keyPresses);
           this.parent.addKeymap(keymap);
           new Notice(
-            `Command  ${ this.commandId } 
+            `Command  ${this.commandId} 
             can now be invoked by ${keymap.sequenceRepr()}`,
           );
           this.close();
@@ -738,9 +745,9 @@ class CommandModal extends Modal {
       button.setButtonText('OK');
       button.onClick(() => {
         if (
-            this.commandId === null ||
-            this.commandId === undefined ||
-            this.commandId === ''
+          this.commandId === null ||
+          this.commandId === undefined ||
+          this.commandId === ''
         ) {
           new Notice('Select a command to register');
           return;
@@ -754,7 +761,6 @@ class CommandModal extends Modal {
   }
 }
 // endregion
-
 
 class LeaderSettingsTab extends PluginSettingTab {
   public commands: ObsidianCommand[];
@@ -790,6 +796,7 @@ class LeaderSettingsTab extends PluginSettingTab {
   }
 
   public conflicts(keyPresses: KeyPress[]): KeyMap[] {
+    // todo validate properly
     return this.plugin.findMatchingKeymaps(keyPresses) || [];
   }
 
@@ -899,95 +906,89 @@ export default class LeaderHotkeys extends Plugin {
   private matchHandler: MatchHandler;
 
   public async onload(): Promise<void> {
-    writeConsole( 'Started Loading.' );
+    writeConsole('Started Loading.');
 
     await this.loadSavedSettings();
     await this.registerEventsAndCallbacks();
 
-    this.settingsTab = new LeaderSettingsTab( this );
-    this.addSettingTab( this.settingsTab );
-    writeConsole( 'Registered Setting Tab.' );
+    this.settingsTab = new LeaderSettingsTab(this);
+    this.addSettingTab(this.settingsTab);
+    writeConsole('Registered Setting Tab.');
 
-    writeConsole( 'Finished Loading.' );
+    writeConsole('Finished Loading.');
   }
 
   public onunload(): void {
-    writeConsole( 'Unloading plugin.' );
+    writeConsole('Unloading plugin.');
   }
 
-  public invokeCommand( commandID: string ): void {
-    if ( commandID ) {
+  public invokeCommand(commandID: string): void {
+    if (commandID) {
       // todo remove any typing
       const app = this.app as any;
-      app.commands.executeCommandById( commandID );
+      app.commands.executeCommandById(commandID);
     }
   }
 
-  public findMatchingKeymaps( presses: KeyPress[] ): KeyMap[] {
-    return this.matchHandler.findMatchingKeymaps( presses );
+  public findMatchingKeymaps(presses: KeyPress[]): KeyMap[] {
+    return this.matchHandler.findMatchingKeymaps(presses);
   }
 
-  public persistKeymaps( newKeymaps: KeyMap[] ): void {
-
-    this.saveData( newKeymaps )
-        .then( () => {
-          new Notice( 'Successfully Saved keymaps.' );
-          this.settings.hotkeys = newKeymaps;
-          this.matchHandler.setKeymap( newKeymaps );
-        } )
-        .catch( () => {
-          new Notice( 'Error while Saving Keymaps.' );
-        } );
-
-
+  public persistKeymaps(newKeymaps: KeyMap[]): void {
+    this.saveData(newKeymaps)
+      .then(() => {
+        new Notice('Successfully Saved keymaps.');
+        this.settings.hotkeys = newKeymaps;
+        this.matchHandler.setKeymap(newKeymaps);
+      })
+      .catch(() => {
+        new Notice('Error while Saving Keymaps.');
+      });
   }
 
   private async registerEventsAndCallbacks(): Promise<void> {
-    writeConsole( 'Registering necessary event callbacks' );
+    writeConsole('Registering necessary event callbacks');
 
     const workspaceContainer = this.app.workspace.containerEl;
     this.registerDomEvent(
-        workspaceContainer,
-        'keydown',
-        this.matchHandler.handleKeyDown,
+      workspaceContainer,
+      'keydown',
+      this.matchHandler.handleKeyDown,
     );
-    writeConsole( 'Registered workspace "keydown" event callbacks.' );
-
+    writeConsole('Registered workspace "keydown" event callbacks.');
 
     const openModalCommand = {
-      id:       'register-modal',
-      name:     'Open Register Modal',
+      id: 'register-modal',
+      name: 'Open Register Modal',
       callback: () => {
         this.settingsTab.refreshCommands();
-        new CommandModal( this.settingsTab ).open();
+        new CommandModal(this.settingsTab).open();
         //	need something here.
       },
     };
-    this.addCommand( openModalCommand );
-    writeConsole( 'Registered open modal command' );
+    this.addCommand(openModalCommand);
+    writeConsole('Registered open modal command');
   }
 
   private async loadSavedSettings(): Promise<void> {
-    writeConsole( 'Loading previously saved settings.' );
+    writeConsole('Loading previously saved settings.');
 
-    
-    const savedSettings = await this.loadData()
+    const savedSettings = await this.loadData();
     try {
-      writeConsole( 'Successfully loaded previous settings.' );
-      savedSettings.hotkeys = this.settings.hotkeys.map( KeyMap.of );
-      this.settings        = savedSettings
-      this.matchHandler     = new MatchHandler( this );
-    } catch ( Exception ) {
-      writeConsole( 'A failure occured while loading the saved settings.' );
-      createNotice( 'A failure occured while loading the saved settings.' )
+      writeConsole('Successfully loaded previous settings.');
+      savedSettings.hotkeys = this.settings.hotkeys.map(KeyMap.of);
+      this.settings = savedSettings;
+      this.matchHandler = new MatchHandler(this);
+    } catch (Exception) {
+      writeConsole('A failure occured while loading the saved settings.');
+      createNotice('A failure occured while loading the saved settings.');
       // todo : Retrocompatibility?
       //  Harder than i thought since LeaderKey isn't saved here.
       //  Would need to keep the old command ,
       //  lookup the binding and convert it to the new one.
-      
-      this.settings = defaultSettings
-    }
 
+      this.settings = defaultSettings;
+    }
   }
 }
 const listCommands = (app: App): ObsidianCommand[] => {
@@ -1025,6 +1026,6 @@ const defaultSettings: SavedSettings = {
 const writeConsole = (message: string): void => {
   console.debug(` Leader Hotkeys: ${message}`);
 };
-const createNotice = ( message : string )  : void => {
-  new Notice( 'Leader Hotkeys: ' + message)
-}
+const createNotice = (message: string): void => {
+  new Notice('Leader Hotkeys: ' + message);
+};
