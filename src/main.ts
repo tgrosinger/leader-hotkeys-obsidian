@@ -331,7 +331,11 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
 
   public advance = (keypress: KeyPress): MatchState => {
     if (keypress.kind() === PressKind.ModifierOnly) {
-      this.currentState = MatchState.RetainedMatch;
+      this.currentState =
+        this.currentState === MatchState.EmptyMatch
+          ? MatchState.EmptyMatch
+          : MatchState.RetainedMatch;
+
       return this.currentState;
     }
 
@@ -496,7 +500,11 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
     const classification = keyPress.kind();
 
     if (classification === PressKind.ModifierOnly) {
-      return;
+      this.currentState =
+        this.currentState === MappingState.EmptySequence
+          ? MappingState.EmptySequence
+          : MappingState.WaitingInput;
+      return this.currentState;
     }
 
     if (this.currentState === MappingState.FinishedMapping) {
@@ -920,7 +928,6 @@ export default class LeaderHotkeys extends Plugin {
     this.settings.hotkeys = newKeymaps;
     this.saveData(this.settings)
       .then(() => {
-        createNotice('Successfully Saved keymaps.');
         this.matchHandler.setKeymap(newKeymaps);
       })
       .catch(() => {
