@@ -12,35 +12,35 @@ interface CommandMap {
   [key: string]: ObsidianCommand;
 }
 
-interface ObsidianApp {
-  // todo
-  appId: string;
-  account;
-  commands;
-  customCss;
-  dom;
-  dragManager;
-  fileManager;
-  foldManager;
-  hotkeyManager;
-  internalPlugins;
-  isMobile;
-  keymap;
-  lastEvent;
-  loadProgress;
-  metadataCache;
-  mobileToolbar;
-  nextFrameEvents;
-  nextFrameTimer;
-  plugins;
-  scope;
-  setting;
-  shareReceiver;
-  statusBar;
-  vault;
-  viewRegistry;
-  workspace;
-}
+// interface ObsidianApp {
+//   // todo
+//   appId: string;
+//   account;
+//   commands;
+//   customCss;
+//   dom;
+//   dragManager;
+//   fileManager;
+//   foldManager;
+//   hotkeyManager;
+//   internalPlugins;
+//   isMobile;
+//   keymap;
+//   lastEvent;
+//   loadProgress;
+//   metadataCache;
+//   mobileToolbar;
+//   nextFrameEvents;
+//   nextFrameTimer;
+//   plugins;
+//   scope;
+//   setting;
+//   shareReceiver;
+//   statusBar;
+//   vault;
+//   viewRegistry;
+//   workspace;
+// }
 
 interface CustomCommand {
   key: string;
@@ -488,6 +488,7 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 
       case RegisterMachineState.PendingConfirmation:
         if (event.key === 'Enter' && event.ctrl && event.alt) {
+          this.currentSequence.pop()
           this.currentState = RegisterMachineState.FinishedRegistering;
         } else if (event.key === 'Enter') {
           this.currentState = RegisterMachineState.AddedKeys;
@@ -617,7 +618,7 @@ class KeymapRegisterer extends Modal {
         const keyPresses = [...this.registerMachine.presses()];
         const conflicts = this.parent.conflicts(keyPresses);
 
-        if (conflicts) {
+        if (conflicts.length > 0) {
           this.setText(
             'This sequence conflicts with other sequences [ . . . ] . Please try again.',
           );
@@ -653,7 +654,7 @@ class CommandModal extends Modal {
     setting.addDropdown((dropdown) => {
       dropdown.selectEl.addClass('leader-hotkeys-command');
 
-      for (const command of this.parent.commands) {
+      for (const command of this.parent.obsidianCommands()) {
         dropdown.addOption(command.id, command.name);
       }
 
@@ -665,6 +666,8 @@ class CommandModal extends Modal {
     setting.addButton((button) => {
       button.setButtonText('OK');
       button.onClick(() => {
+        // todo if this.commandId is undefined ...
+
         const registerer = new KeymapRegisterer(this.parent, this.commandId);
         registerer.open();
         this.close();
@@ -703,9 +706,12 @@ class LeaderSettingsTab extends PluginSettingTab {
   }
 
   public conflicts(keyPresses: KeyPress[]): KeyMap[] {
-    return this.plugin.matchKeymap(keyPresses);
-  }
 
+    return this.plugin.matchKeymap(keyPresses) || [];
+  }
+  public obsidianCommands(): ObsidianCommand[] {
+    return this.commands;
+  }
   public addKeymap(keymap: KeyMap): void {
     writeConsole(`Adding keymap: ${keymap.fullRepr()}`);
 
@@ -837,6 +843,7 @@ export default class LeaderHotkeys extends Plugin {
         //	todo notify
       });
 
+
     this.trie = Trie.from(keymaps);
     this.matcher = new MatchMachine(this.trie);
   }
@@ -933,6 +940,8 @@ export default class LeaderHotkeys extends Plugin {
     }
 
     this.settings = savedSettings || defaultSettings;
+    this.settings.hotkeys = this.settings.hotkeys.map(KeyMap.of)
+
     this.trie = Trie.from(this.settings.hotkeys);
     this.matcher = new MatchMachine(this.trie);
   }
