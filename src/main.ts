@@ -335,6 +335,7 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
     }
 
     const macroState = this.stateKind();
+    const wasAlreadySearching = macroState === MatchStateKind.Flow;
     if (macroState === MatchStateKind.Terminal) {
       // Reset and try again.
       this.currentState = MatchState.EmptyMatch;
@@ -343,9 +344,7 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
       return this.advance(keypress);
     }
 
-    const wasAlreadySearching = macroState === MatchStateKind.Flow;
     this.currentSequence.push(keypress);
-
     const bestMatch = this.trie.bestMatch(this.currentSequence);
     const matchKind = classifyMatch(bestMatch);
     this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
@@ -364,8 +363,8 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
       case MatchKind.FullMatch:
         this.currentState = wasAlreadySearching
           ? MatchState.SuccessMatch
-          : // Very sus to reach success state at first try.
-            MatchState.SuccessMatch;
+          // Very sus to reach success state at first try.
+          : MatchState.SuccessMatch;
         break;
     }
 
@@ -474,12 +473,6 @@ enum MappingState {
   FinishedMapping,
 }
 
-enum MappingStateKind {
-  Mapping,
-  Pending,
-  Terminal,
-}
-
 enum PendingChoice {
   KeepLiteral,
   DiscardLiteral,
@@ -510,7 +503,8 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
       return this.advance(keyPress);
     }
 
-    if (this.stateKind() === MappingStateKind.Pending) {
+    if ( this.currentState === MappingState.PendingAddition ||
+         this.currentState === MappingState.PendingDeletion) {
       const previousLiteral = this.currentSequence.pop();
       const action = this.interpretAction(keyPress);
 
@@ -533,37 +527,26 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
           break;
       }
     }
+    else {
 
-    this.currentSequence.push(keyPress);
-    if (classification === PressKind.SpecialKey) {
-      this.currentState =
-        keyPress.key === 'Enter'
-          ? MappingState.PendingAddition
-          : MappingState.PendingDeletion;
-    } else {
-      this.currentState =
-        this.currentSequence.length === 1
-          ? MappingState.FirstKey
-          : MappingState.AddedKeys;
+      this.currentSequence.push(keyPress);
+      if (classification === PressKind.SpecialKey) {
+        this.currentState =
+            keyPress.key === 'Enter'
+            ? MappingState.PendingAddition
+            : MappingState.PendingDeletion;
+      } else {
+        this.currentState =
+            this.currentSequence.length === 1
+            ? MappingState.FirstKey
+            : MappingState.AddedKeys;
+      }
+
     }
 
     return this.currentState;
   };
 
-  public stateKind(): MappingStateKind {
-    if (this.currentState === MappingState.FinishedMapping) {
-      return MappingStateKind.Terminal;
-    }
-
-    const pendingStates = [
-      MappingState.PendingAddition,
-      MappingState.PendingDeletion,
-    ];
-
-    return pendingStates.includes(this.currentState)
-      ? MappingStateKind.Pending
-      : MappingStateKind.Mapping;
-  }
 
   public readonly presses = (): readonly KeyPress[] => {
     return this.currentSequence;
