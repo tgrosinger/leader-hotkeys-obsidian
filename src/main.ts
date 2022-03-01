@@ -557,7 +557,6 @@ class KeymapRegisterer extends Modal {
 	};
 
 	private readonly handleKeyDown = ( event: KeyboardEvent ): void => {
-		console.log( event );
 		const keyPress      = KeyPress.fromEvent( event );
 		const registerState = this.registerMachine.advance( keyPress );
 		switch ( registerState ) {
@@ -600,7 +599,6 @@ class KeymapRegisterer extends Modal {
 
 				const keyPresses = [ ...this.registerMachine.presses() ];
 				const conflicts  = this.parent.conflicts( keyPresses );
-				console.log( conflicts );
 				if ( conflicts.length > 0 ) {
 					this.setText(
 						'This sequence conflicts with other sequences [ . . . ] . Please try again.',
@@ -880,61 +878,31 @@ export default class LeaderHotkeys extends Plugin {
 	}
 
 	private readonly handleKeyDown = ( event: KeyboardEvent ): void => {
-		console.log( this.app.keymap );
-		console.log( this.app.scope );
 
 		const keypress     = KeyPress.fromEvent( event );
 		const currentState = this.matcher.advance( keypress );
 		switch ( currentState ) {
 			case MatchMachineState.NoMatch:
-				writeConsole(
-					'An keypress resulted in a NoMatch state. Letting this event pass.',
-				);
+
+				writeConsole( `An keypress resulted in a ${ MatchMachineState[currentState]} state.`)
+				return
+
+			case MatchMachineState.RetainedMatch:
+			case MatchMachineState.StartedMatch:
+			case MatchMachineState.InvalidMatch:
+			case MatchMachineState.ImprovedMatch:
+				event.preventDefault();
+				writeConsole( `An keypress resulted in a ${ MatchMachineState[currentState]} state.`)
 				return;
 
-			case MatchMachineState.InvalidMatch: {
+			case MatchMachineState.SuccessMatch:
 				event.preventDefault();
-				writeConsole(
-					'An keypress resulted in a ExitMatch. Exiting matching state.',
-				);
-			}
-				return;
-
-			case MatchMachineState.StartedMatch: {
-				event.preventDefault();
-				writeConsole(
-					'An keypress resulted in a LeaderMatch. Entering matching state.',
-				);
-			}
-				return;
-
-			case MatchMachineState.RetainedMatch: {
-				event.preventDefault();
-				writeConsole(
-					'An keypress resulted in a RetainedMatch. Retaining matching state.',
-				);
-			}
-				return;
-
-			case MatchMachineState.ImprovedMatch: {
-				event.preventDefault();
-				writeConsole(
-					'An keypress resulted in a ImprovedMatch. Waiting for the rest of the key sequence.',
-				);
-			}
-				return;
-
-			case MatchMachineState.SuccessMatch: {
-				event.preventDefault();
-				writeConsole(
-					'An keypress resulted in a FullMatch. Dispatching keymap.',
-				);
-
+				writeConsole( `An keypress resulted in a ${ MatchMachineState[currentState]} state.`)
 				const keymap = this.matcher.fullMatch();
 				this.invoke( keymap );
-			}
 				return;
 		}
+
 	};
 
 	private async registerEventsAndCallbacks(): Promise<void> {
@@ -978,8 +946,6 @@ export default class LeaderHotkeys extends Plugin {
 		this.trie    = Trie.from( this.settings.hotkeys );
 		this.matcher = new MatchMachine( this.trie );
 
-		console.log( this.app.keymap );
-		console.log( this.app.scope );
 
 	}
 
