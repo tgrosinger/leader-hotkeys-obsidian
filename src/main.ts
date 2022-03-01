@@ -331,6 +331,7 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
 
   public advance = (keypress: KeyPress): MatchState => {
     if (keypress.kind() === PressKind.ModifierOnly) {
+      this.currentState = MatchState.RetainedMatch;
       return this.currentState;
     }
 
@@ -421,6 +422,7 @@ class MatchHandler {
   }
 
   public readonly handleKeyDown = (event: KeyboardEvent): void => {
+    console.log(event);
     const keypress = KeyPress.fromEvent(event);
     const machineState = this.machine.advance(keypress);
     writeConsole(
@@ -915,10 +917,10 @@ export default class LeaderHotkeys extends Plugin {
   }
 
   public persistKeymaps(newKeymaps: KeyMap[]): void {
-    this.saveData(newKeymaps)
+    this.settings.hotkeys = newKeymaps;
+    this.saveData(this.settings)
       .then(() => {
         createNotice('Successfully Saved keymaps.');
-        this.settings.hotkeys = newKeymaps;
         this.matchHandler.setKeymap(newKeymaps);
       })
       .catch(() => {
@@ -956,9 +958,9 @@ export default class LeaderHotkeys extends Plugin {
     const savedSettings = (await this.loadData()) || {};
     try {
       writeConsole('Loaded previous settings.');
-      savedSettings.hotkeys = (this.settings.hotkeys || []).map(KeyMap.of);
+      savedSettings.hotkeys = (savedSettings.hotkeys || []).map(KeyMap.of);
       this.settings = savedSettings;
-    } catch (Exception) {
+    } catch (err) {
       writeConsole('A failure occured while parsing the saved settings.');
       createNotice(
         'A failure occured while loading the saved settings. Fallbacking to defaults.',
