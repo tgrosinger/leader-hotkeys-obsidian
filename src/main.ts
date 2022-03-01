@@ -286,8 +286,9 @@ class KeyPress implements Hashable {
 		) {
 			return PressType.NoKey;
 		}
-
-		if ( this.key === 'Enter' || this.key === 'Escape' ) {
+		if ( this.key === 'Enter' ||
+			 this.key === 'Escape' ||
+		this.key === 'Backspace'){
 			return PressType.SpecialKey;
 		}
 
@@ -446,7 +447,7 @@ enum RegisterMachineState {
 	NoKeys,
 	FirstKey,
 	AddedKeys,
-	RetainedKeys,
+	ContinuingMatching,
 	DeletedKey,
 	PendingAddition,
 	PendingDeletion,
@@ -468,11 +469,11 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 		switch ( this.currentState ) {
 			case RegisterMachineState.NoKeys:
 			case RegisterMachineState.FirstKey:
-			case RegisterMachineState.RetainedKeys:
+			case RegisterMachineState.ContinuingMatching:
 			case RegisterMachineState.DeletedKey:
 			case RegisterMachineState.AddedKeys:
 				if ( classification === PressType.NoKey ) {
-					this.currentState = RegisterMachineState.RetainedKeys;
+					this.currentState = RegisterMachineState.ContinuingMatching;
 				} else if ( classification === PressType.SpecialKey ) {
 					this.currentSequence.push( event )
 					this.currentState = event.key === 'Enter'
@@ -488,19 +489,6 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 				return this.currentState;
 
 			case RegisterMachineState.PendingDeletion:
-				if ( event.key === 'Enter' && event.ctrl && event.alt ) {
-					this.currentSequence.pop();
-					this.currentState = RegisterMachineState.FinishedRegistering;
-				} else if ( event.key === 'Enter' ){
-					this.currentState = RegisterMachineState.AddedKeys;
-				}
-				else {
-					this.currentSequence.pop();
-					this.currentSequence.pop()
-					this.currentState = RegisterMachineState.DeletedKey;
-				}
-				return this.currentState;
-
 			case RegisterMachineState.PendingAddition:
 				if ( event.key === 'Enter' && event.ctrl && event.alt ) {
 					this.currentSequence.pop();
@@ -508,9 +496,19 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 				} else if ( event.key === 'Enter' ){
 					this.currentState = RegisterMachineState.AddedKeys;
 				}
-				else {
+				else if ( event.key === 'Backspace' && this.currentState === RegisterMachineState.PendingAddition){
+					// Just canceling the addition of a keymap.
 					this.currentSequence.pop();
-					this.currentState = RegisterMachineState.RetainedKeys;
+					this.currentState = RegisterMachineState.ContinuingMatching;
+				}
+				else if ( event.key === 'Backspace' && this.currentState === RegisterMachineState.PendingDeletion) {
+					// Need to delete the signal AND the key that it pointed to.
+					this.currentSequence.pop();
+					this.currentSequence.pop();
+					this.currentState = RegisterMachineState.DeletedKey;
+				}
+				else {
+					this.currentState = this.currentState;
 				}
 				return this.currentState;
 
@@ -570,7 +568,7 @@ class KeymapRegisterer extends Modal {
 
 		switch ( registerState ) {
 			case RegisterMachineState.NoKeys:
-			case RegisterMachineState.RetainedKeys:
+			case RegisterMachineState.ContinuingMatching:
 			case RegisterMachineState.FirstKey:
 			case RegisterMachineState.DeletedKey:
 			case RegisterMachineState.AddedKeys:
