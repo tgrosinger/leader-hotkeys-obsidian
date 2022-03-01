@@ -363,8 +363,8 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
       case MatchKind.FullMatch:
         this.currentState = wasAlreadySearching
           ? MatchState.SuccessMatch
-          // Very sus to reach success state at first try.
-          : MatchState.SuccessMatch;
+          : // Very sus to reach success state at first try.
+            MatchState.SuccessMatch;
         break;
     }
 
@@ -449,7 +449,7 @@ class MatchHandler {
   }
 
   public setKeymap(keymaps: KeyMap[]): void {
-    this.trie = Trie.from(keymaps || [] );
+    this.trie = Trie.from(keymaps || []);
     this.machine = new MatchMachine(this.trie);
   }
 
@@ -503,8 +503,10 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
       return this.advance(keyPress);
     }
 
-    if ( this.currentState === MappingState.PendingAddition ||
-         this.currentState === MappingState.PendingDeletion) {
+    if (
+      this.currentState === MappingState.PendingAddition ||
+      this.currentState === MappingState.PendingDeletion
+    ) {
       const previousLiteral = this.currentSequence.pop();
       const action = this.interpretAction(keyPress);
 
@@ -526,27 +528,23 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
         default:
           break;
       }
-    }
-    else {
-
+    } else {
       this.currentSequence.push(keyPress);
       if (classification === PressKind.SpecialKey) {
         this.currentState =
-            keyPress.key === 'Enter'
+          keyPress.key === 'Enter'
             ? MappingState.PendingAddition
             : MappingState.PendingDeletion;
       } else {
         this.currentState =
-            this.currentSequence.length === 1
+          this.currentSequence.length === 1
             ? MappingState.FirstKey
             : MappingState.AddedKeys;
       }
-
     }
 
     return this.currentState;
   };
-
 
   public readonly presses = (): readonly KeyPress[] => {
     return this.currentSequence;
@@ -928,7 +926,7 @@ export default class LeaderHotkeys extends Plugin {
       });
   }
 
-  private readonly  registerEventsAndCallbacks = async (): Promise<void> => {
+  private readonly registerEventsAndCallbacks = async (): Promise<void> => {
     writeConsole('Registering necessary event callbacks');
 
     const workspaceContainer = this.app.workspace.containerEl;
@@ -950,31 +948,33 @@ export default class LeaderHotkeys extends Plugin {
     };
     this.addCommand(openModalCommand);
     writeConsole('Registered open modal command');
-  }
+  };
 
-  private readonly  loadSavedSettings = async (): Promise<void> => {
+  private readonly loadSavedSettings = async (): Promise<void> => {
     writeConsole('Loading previously saved settings.');
 
-    const savedSettings = await this.loadData() || {};
+    const savedSettings = (await this.loadData()) || {};
     try {
       writeConsole('Loaded previous settings.');
-      savedSettings.hotkeys = (this.settings.hotkeys || [] ).map(KeyMap.of);
+      savedSettings.hotkeys = (this.settings.hotkeys || []).map(KeyMap.of);
       this.settings = savedSettings;
-
     } catch (Exception) {
       writeConsole('A failure occured while parsing the saved settings.');
-      createNotice('A failure occured while loading the saved settings. Fallbacking to defaults.');
+      createNotice(
+        'A failure occured while loading the saved settings. Fallbacking to defaults.',
+      );
       // todo : Retrocompatibility?
       //  Harder than i thought since LeaderKey isn't saved here.
       //  Would need to keep the old command ,
       //  lookup the binding and convert it to the new one.
 
       this.settings = defaultSettings;
-
     }
     this.matchHandler = new MatchHandler(this);
-  }
+  };
 }
+
+// region consts and utils
 const listCommands = (app: App): ObsidianCommand[] => {
   // todo remove any type
   const anyApp = app as any;
@@ -1022,3 +1022,4 @@ const writeConsole = (message: string): void => {
 const createNotice = (message: string): void => {
   new Notice('Leader Hotkeys: ' + message);
 };
+// endregion
