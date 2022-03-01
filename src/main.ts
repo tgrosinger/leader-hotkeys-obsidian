@@ -1,11 +1,4 @@
-import {
-  App,
-  Modal,
-  Notice,
-  Plugin,
-  PluginSettingTab,
-  Setting,
-} from 'obsidian';
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, } from 'obsidian';
 
 // region  Type Shims
 interface ObsidianCommand {
@@ -56,11 +49,6 @@ interface CustomCommand {
 
 //
 type Optional<T> = T | undefined | null;
-
-interface Hashable {
-  serialize(): string;
-}
-
 interface StateMachine<K, T> {
   // Would love to restrict T to a finite set ( T extends Enum),
   // but it's not possible to do that in TypeScript
@@ -70,12 +58,14 @@ interface StateMachine<K, T> {
 // endregion
 
 // region Fundamental Domain
-enum PressType {
-  NoKey,
+enum PressKind {
+  ModifierOnly,
   SpecialKey,
   NormalKey,
 }
-
+interface Hashable {
+  asHash(): string;
+}
 class KeyPress implements Hashable {
   // region static constructors
   public static ctrl(key: string): KeyPress {
@@ -113,11 +103,13 @@ class KeyPress implements Hashable {
   }
 
   public static fromCustom(binding: CustomCommand): KeyPress {
-    const key = binding.key;
-    const shift = binding.modifiers.contains('Shift');
-    const ctrl = binding.modifiers.contains('Ctrl');
-    const alt = binding.modifiers.contains('Alt');
-    const meta = binding.modifiers.contains('Meta');
+    const modifiers = binding.modifiers;
+    
+    const key     = binding.key;
+    const shift = modifiers.contains( 'Shift');
+    const ctrl    = modifiers.contains('Ctrl');
+    const alt     = modifiers.contains('Alt');
+    const meta    = modifiers.contains('Meta');
     return new KeyPress(key, shift, ctrl, alt, meta);
   }
 
@@ -138,7 +130,6 @@ class KeyPress implements Hashable {
   public readonly ctrl: boolean;
   public readonly shift: boolean;
   public readonly meta: boolean;
-
   public constructor(
     key: string,
     shift: boolean,
@@ -153,7 +144,7 @@ class KeyPress implements Hashable {
     this.meta = meta;
   }
 
-  public readonly text = (): string => {
+  public readonly text                   = (): string => {
     const metaRepr = this.meta ? '⌘ + ' : '';
     const altRepr = this.alt ? 'Alt + ' : '';
     const ctrlRepr = this.ctrl ? 'Ctrl + ' : '';
@@ -161,77 +152,66 @@ class KeyPress implements Hashable {
 
     return metaRepr + ctrlRepr + altRepr + shiftRepr + this.key;
   };
-  public readonly elementRepresentation = (): HTMLElement => {
+  public readonly kbd    = (): HTMLElement => {
     const result = document.createElement('kbd');
     result.addClass('setting-hotkey');
     result.setText(this.text());
     result.style.padding = '2px';
     result.style.margin = '5px';
-
     result.style.border = '1px solid rgba(255,255,255,.25)';
     result.style.borderRadius = '3px';
     return result;
   };
-  public readonly serialize = (): string => {
+  public readonly asHash = (): string => {
     return this.text();
   };
 
-  public readonly classification = (): PressType => {
-    if (
-      this.key === null ||
-      this.key === undefined ||
-      this.key === 'Alt' ||
-      this.key === 'Control' ||
-      this.key === 'Shift' ||
-      this.key === 'Meta' ||
-      this.key === 'AltGraph'
+  public readonly kind = (): PressKind => {
+    if ( this.key === null ||
+        this.key === undefined ||
+         ['Alt' , 'Control' , 'Shift' , 'Meta' , 'AltGraph'].includes( this.key)
     ) {
-      return PressType.NoKey;
+      return PressKind.ModifierOnly;
     }
-    if (
-      this.key === 'Enter' ||
-      this.key === 'Escape' ||
-      this.key === 'Backspace'
+    if ( ['Enter' , 'Escape'  , 'Backspace'].includes( this.key)
     ) {
-      return PressType.SpecialKey;
+      return PressKind.SpecialKey;
     }
 
-    return PressType.NormalKey;
+    return PressKind.NormalKey;
   };
 }
 
 class KeyMap implements Iterable<KeyPress> {
   public static of(keyMapLike: KeyMap): KeyMap {
-    const presses = keyMapLike.sequence.map(KeyPress.of);
+    // FIXME : Theoretically possible to create a keymap without a commandID.
+    
+    const sequence = keyMapLike.sequence || [] 
+    
+    const presses = sequence.map(KeyPress.of);
     const command = keyMapLike.commandID;
     return new KeyMap(command, presses);
   }
 
   public sequence: KeyPress[];
   public commandID: string;
-
   constructor(commandID: string, sequence: KeyPress[]) {
     this.sequence = sequence;
     this.commandID = commandID;
   }
 
+  
   public [Symbol.iterator](): Iterator<KeyPress> {
     return this.sequence.values();
   }
-
-  public fullRepr = (): string => {
-    return this.commandID + ' = ' + this.sequenceRepr();
-  };
-
-  public sequenceRepr = (): string => {
-    return this.sequence.map((key) => key.text()).join(' => ');
+  public text = (): string => {
+    return this.commandID + ' = ' + this.sequence.map( press => press.text() ).join(' => ')
   };
 }
 
-interface SavedSettings {
+interface KeyBinding {
   hotkeys: KeyMap[];
 }
-
 // endregion
 
 // region Matching of existing keymaps
@@ -300,9 +280,11 @@ class Trie<T extends HashIter> {
   }
 
   public add(composite: T): Trie<T> {
+
+    // FIXME : Honestly, very sus implementation
     let lastSeenNode = this.root;
     for (const component of composite) {
-      const key = component.serialize();
+      const key = component.asHash();
       const child = lastSeenNode.child(key) || new TrieNode();
       lastSeenNode.addChild(key, child);
       lastSeenNode = child;
@@ -317,7 +299,7 @@ class Trie<T extends HashIter> {
   public bestMatch(sequence: Hashable[]): Optional<TrieNode<T>> {
     let lastNode = this.root;
     for (const keyPress of sequence) {
-      const key = keyPress.serialize();
+      const key = keyPress.asHash();
       const child = lastNode.child(key);
       if (!child) {
         return null;
@@ -328,19 +310,16 @@ class Trie<T extends HashIter> {
     return lastNode;
   }
 
-  public contains(sequence: Hashable[]): boolean {
-    return this.bestMatch(sequence) !== null;
-  }
 }
 
-enum MatchType {
+enum MatchKind {
   NoMatch,
   PartialMatch,
   FullMatch,
 }
 
 enum MatchStates {
-  NoMatch,
+  EmptyMatch,
   StartedMatch,
   RetainedMatch,
   ImprovedMatch,
@@ -349,15 +328,6 @@ enum MatchStates {
 }
 
 class MatchMachine implements StateMachine<KeyPress, MatchStates> {
-  private static classify(bestMatch: Optional<TrieNode<KeyMap>>): MatchType {
-    if (!bestMatch) {
-      return MatchType.NoMatch;
-    }
-    if (bestMatch.isLeaf()) {
-      return MatchType.FullMatch;
-    }
-    return MatchType.PartialMatch;
-  }
 
   private readonly trie: Trie<KeyMap>;
   private currentState: MatchStates;
@@ -366,55 +336,49 @@ class MatchMachine implements StateMachine<KeyPress, MatchStates> {
 
   constructor(trie: Trie<KeyMap>) {
     this.trie = trie;
-    this.currentState = MatchStates.NoMatch;
+    this.currentState = MatchStates.EmptyMatch;
     this.currentSequence = [];
     this.currentMatches = [];
   }
 
   public advance = (keypress: KeyPress): MatchStates => {
+    if ( keypress.kind() === PressKind.ModifierOnly) {
+      return this.currentState
+    }
+
+    if ( this.inTerminalState() ) {
+      this.currentState    = MatchStates.EmptyMatch;
+      this.currentSequence = [];
+      this.currentMatches  = [];
+      return this.advance( keypress );
+    }
+
+    const wasSearching = this.inPartialState()
     this.currentSequence.push(keypress);
 
     const bestMatch = this.trie.bestMatch(this.currentSequence);
-    const matchType = MatchMachine.classify(bestMatch);
-
+    const matchKind = classifyMatch(bestMatch);
     this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 
-    switch (this.currentState) {
-      // Start Matching
-      case MatchStates.NoMatch:
-        if (matchType === MatchType.NoMatch) {
-          this.currentSequence.pop();
-          this.currentState = MatchStates.NoMatch;
-        } else if (matchType === MatchType.FullMatch) {
-          // Suspicious to have a full match here.
-          this.currentState = MatchStates.SuccessMatch;
-        } else {
-          this.currentState = MatchStates.StartedMatch;
-        }
-        return this.currentState;
-      // Continue / Finish Matching
-      case MatchStates.StartedMatch:
-      case MatchStates.RetainedMatch:
-      case MatchStates.ImprovedMatch:
-        if (keypress.classification() === PressType.NoKey) {
-          this.currentSequence.pop();
-          this.currentState = MatchStates.RetainedMatch;
-        } else if (matchType === MatchType.NoMatch) {
-          this.currentState = MatchStates.InvalidMatch;
-        } else if (matchType === MatchType.FullMatch) {
-          this.currentState = MatchStates.SuccessMatch;
-        } else {
-          this.currentState = MatchStates.ImprovedMatch;
-        }
-        return this.currentState;
-      // Clear previous matching and rematch
-      case MatchStates.SuccessMatch:
-      case MatchStates.InvalidMatch:
-        this.currentState = MatchStates.NoMatch;
-        this.currentSequence = [];
-        this.currentMatches = [];
-        return this.advance(keypress);
-    }
+    switch ( matchKind ) {
+        case MatchKind.NoMatch :
+          this.currentState = wasSearching
+                              ? MatchStates.InvalidMatch
+                              : MatchStates.EmptyMatch;
+          break
+      case MatchKind.PartialMatch:
+        this.currentState = wasSearching
+                            ? MatchStates.ImprovedMatch
+                            : MatchStates.StartedMatch;
+        break
+      case MatchKind.FullMatch:
+        this.currentState = MatchStates.SuccessMatch;
+        break
+      }
+
+      return this.currentState;
+
+
   };
 
   public allMatches = (): readonly KeyMap[] => {
@@ -438,6 +402,16 @@ class MatchMachine implements StateMachine<KeyPress, MatchStates> {
     }
     return null;
   };
+
+  private inTerminalState() : boolean {
+    return [ MatchStates.InvalidMatch , MatchStates.SuccessMatch].includes( this.currentState)
+  }
+
+  private inPartialState(): boolean {
+
+      return  [ MatchStates.StartedMatch, MatchStates.RetainedMatch, MatchStates.ImprovedMatch].includes( this.currentState)
+
+  }
 }
 
 class MatchHandler {
@@ -455,7 +429,7 @@ class MatchHandler {
     const currentState = this.machine.advance(keypress);
 
     switch (currentState) {
-      case MatchStates.NoMatch:
+      case MatchStates.EmptyMatch:
         writeConsole(
           `An keypress resulted in a ${MatchStates[currentState]} state.`,
         );
@@ -525,7 +499,7 @@ class RegisterMachine implements StateMachine<KeyPress, RegistrationState> {
   }
 
   public readonly advance = (event: KeyPress): RegistrationState => {
-    const classification = event.classification();
+    const classification = event.kind();
 
     switch (this.currentState) {
       case RegistrationState.NoKeys:
@@ -533,9 +507,9 @@ class RegisterMachine implements StateMachine<KeyPress, RegistrationState> {
       case RegistrationState.ContinuingMatching:
       case RegistrationState.DeletedKey:
       case RegistrationState.AddedKeys:
-        if (classification === PressType.NoKey) {
+        if ( classification === PressKind.ModifierOnly) {
           this.currentState = RegistrationState.ContinuingMatching;
-        } else if (classification === PressType.SpecialKey) {
+        } else if ( classification === PressKind.SpecialKey) {
           this.currentSequence.push(event);
           this.currentState =
             event.key === 'Enter'
@@ -590,7 +564,7 @@ class RegisterMachine implements StateMachine<KeyPress, RegistrationState> {
     return this.currentSequence;
   };
   public readonly documentRepresentation = (): HTMLElement[] => {
-    return this.presses().map((press) => press.elementRepresentation());
+    return this.presses().map((press) => press.kbd());
   };
 }
 class SequenceModal extends Modal {
@@ -641,10 +615,10 @@ class SequenceModal extends Modal {
           lastElement.style.opacity = '0.5';
           this.renderKeyPresses(elements);
 
-          const backspace = KeyPress.just('Backspace').elementRepresentation();
-          const enter = KeyPress.just('Enter').elementRepresentation();
+          const backspace = KeyPress.just('Backspace').kbd();
+          const enter = KeyPress.just('Enter').kbd();
           const ctrlAltEnter =
-            KeyPress.ctrlAlt('Enter').elementRepresentation();
+            KeyPress.ctrlAlt('Enter').kbd();
           const pressLiteral = lastElement.cloneNode(true) as HTMLElement;
           pressLiteral.style.opacity = '1';
 
@@ -682,11 +656,11 @@ class SequenceModal extends Modal {
           // todo handle this properly
           new Notice('There are conflicts with your keyPresses!');
         } else {
-          const keymap = new KeyMap(this.commandId, keyPresses);
-          this.parent.addKeymap(keymap);
-          new Notice(
-            `Command  ${this.commandId} 
-            can now be invoked by ${keymap.sequenceRepr()}`,
+          const newKeyMap = new KeyMap(this.commandId, keyPresses);
+          this.parent.addKeymap(newKeyMap);
+          const sequenceRepr = newKeyMap.sequence.map((key) => key.text()).join(' => '); 
+          new Notice( `Command  ${this.commandId}
+           can now be invoked by ${sequenceRepr}`,
           );
           this.close();
         }
@@ -805,7 +779,7 @@ class LeaderSettingsTab extends PluginSettingTab {
   }
 
   public addKeymap(keymap: KeyMap): void {
-    writeConsole(`Adding keymap: ${keymap.fullRepr()}`);
+    writeConsole(`Adding keymap: ${keymap.text()}`);
 
     const newHotkeys = [...this.currentKeymaps()].concat(keymap);
 
@@ -815,7 +789,7 @@ class LeaderSettingsTab extends PluginSettingTab {
   public removeKeymap(positionId: number): void {
     const currentHotkeys = this.currentKeymaps();
     const toRemove = currentHotkeys[positionId];
-    writeConsole(`Removing keymap: ${toRemove.fullRepr()}`);
+    writeConsole(`Removing keymap: ${toRemove.text()}`);
 
     const newKeymap = [];
     for (let i = 0; i < currentHotkeys.length; i++) {
@@ -829,7 +803,7 @@ class LeaderSettingsTab extends PluginSettingTab {
 
   public updateKeymap(positionId: number, keyMap: KeyMap): void {
     writeConsole(
-      `Updating keymap at position ${positionId}: ${keyMap.fullRepr()}`,
+      `Updating keymap at position ${positionId}: ${keyMap.text()}`,
     );
     const keyMaps = [...this.currentKeymaps()];
     keyMaps[positionId] = keyMap;
@@ -876,7 +850,7 @@ class LeaderSettingsTab extends PluginSettingTab {
     keySetter.addClass('setting-hotkey');
 
     const kbds = thisKeymap.sequence.map((press) =>
-      press.elementRepresentation(),
+      press.kbd(),
     );
     keySetter.append(...kbds);
 
@@ -892,7 +866,7 @@ class LeaderSettingsTab extends PluginSettingTab {
     settingControl.insertBefore(appendText, settingControl.children[1]);
   }
 
-  private currentSettings(): SavedSettings {
+  private currentSettings(): KeyBinding {
     return this.plugin.settings;
   }
 
@@ -901,7 +875,7 @@ class LeaderSettingsTab extends PluginSettingTab {
   }
 }
 export default class LeaderHotkeys extends Plugin {
-  public settings: SavedSettings;
+  public settings: KeyBinding;
   private settingsTab: LeaderSettingsTab;
   private matchHandler: MatchHandler;
 
@@ -997,6 +971,15 @@ const listCommands = (app: App): ObsidianCommand[] => {
   const commands = anyApp.commands.commands as CommandMap;
   return Object.values(commands);
 };
+const classifyMatch = (bestMatch: Optional<TrieNode<KeyMap>>): MatchKind => {
+  if (!bestMatch) {
+    return MatchKind.NoMatch;
+  }
+  if (bestMatch.isLeaf()) {
+    return MatchKind.FullMatch;
+  }
+  return MatchKind.PartialMatch;
+}
 const defaultHotkeys: KeyMap[] = [
   new KeyMap('editor:focus-left', [KeyPress.ctrl('b'), KeyPress.just('h')]),
   new KeyMap('editor:focus-right', [KeyPress.ctrl('b'), KeyPress.just('l')]),
@@ -1020,7 +1003,7 @@ const defaultHotkeys: KeyMap[] = [
     KeyPress.just('e'),
   ]),
 ];
-const defaultSettings: SavedSettings = {
+const defaultSettings: KeyBinding = {
   hotkeys: defaultHotkeys,
 };
 const writeConsole = (message: string): void => {
