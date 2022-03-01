@@ -439,43 +439,29 @@ class MatchHandler {
   }
 
   public readonly handleKeyDown = (event: KeyboardEvent): void => {
+
     const keypress = KeyPress.fromEvent(event);
-    const currentState = this.machine.advance(keypress);
+    const machineState = this.machine.advance(keypress);
+    writeConsole( `An keypress resulted in a ${MatchState[machineState]} state.`, );
 
-    switch (currentState) {
-      case MatchState.EmptyMatch:
-        writeConsole(
-          `An keypress resulted in a ${MatchState[currentState]} state.`,
-        );
-        return;
-      case MatchState.RetainedMatch:
-      case MatchState.StartedMatch:
-      case MatchState.InvalidMatch:
-      case MatchState.ImprovedMatch:
-        event.preventDefault();
-        writeConsole(
-          `An keypress resulted in a ${MatchState[currentState]} state.`,
-        );
-        return;
+    if ( this.machine.stateKind() !== MatchStateKind.Initial ) {
+      event.preventDefault()
 
-      case MatchState.SuccessMatch:
-        event.preventDefault();
-        writeConsole(
-          `An keypress resulted in a ${MatchState[currentState]} state.`,
-        );
+      if ( machineState === MatchState.SuccessMatch ) {
         const keymap = this.machine.fullMatch();
-        this.emit(keymap);
-        return;
+        this.emit( keymap );
+      }
     }
+
   };
 
   public emit(keymap: Optional<KeyMap>): void {
-    if (!keymap) {
-      writeConsole(
-        'Fully matched an prefix, but without a corresponding Keymap. This is definitely a bug.',
-      );
+    if (keymap) {
+      this.parent.invokeCommand(keymap.commandID);
+      return
     }
-    this.parent.invokeCommand(keymap.commandID);
+
+    writeConsole( 'Fully matched an prefix, but without a corresponding Keymap. This is definitely a bug.', );
   }
 
   public setKeymap(keymaps: KeyMap[]): void {
