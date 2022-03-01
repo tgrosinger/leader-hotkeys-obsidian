@@ -181,7 +181,6 @@ interface KeyBinding {
 
 // region Matching of existing keymaps
 interface HashIter extends Iterable<Hashable> {}
-
 class TrieNode<T> {
   public children = new Map<string, TrieNode<T>>();
 
@@ -222,7 +221,6 @@ class TrieNode<T> {
     this.value = value;
   }
 }
-
 class Trie<T extends HashIter> {
   public static from<K extends HashIter>(iter: K[]): Trie<K> {
     const trie = new Trie<K>();
@@ -294,6 +292,7 @@ enum MatchStateKind {
   Flow,
   Terminal
 }
+
 class MatchMachine implements StateMachine<KeyPress, MatchState> {
 
   private readonly trie: Trie<KeyMap>;
@@ -463,7 +462,7 @@ enum MappingState {
    Unknown
  }
 
-class MappingMachine implements StateMachine<KeyPress, MappingState> {
+ class MappingMachine implements StateMachine<KeyPress, MappingState> {
   private currentState: MappingState;
   private readonly currentSequence: KeyPress[];
 
@@ -562,7 +561,6 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
 
   }
 }
-
 class SequenceModal extends Modal {
   private readonly parent: LeaderSettingsTab;
   private readonly registerMachine: MappingMachine;
@@ -650,12 +648,12 @@ class SequenceModal extends Modal {
         const conflicts = this.parent.conflicts(keyPresses);
         if (conflicts.length >= 1) {
           // todo handle this properly
-          new Notice('There are conflicts with your keyPresses!');
+          createNotice('There are conflicts with your keyPresses!');
         } else {
           const newKeyMap = new KeyMap(this.commandId, keyPresses);
           this.parent.addKeymap(newKeyMap);
           const sequenceRepr = newKeyMap.sequence.map((key) => key.text()).join(' => '); 
-          new Notice( `Command  ${this.commandId}
+          createNotice( `Command  ${this.commandId}
            can now be invoked by ${sequenceRepr}`,
           );
           this.close();
@@ -719,7 +717,7 @@ class CommandModal extends Modal {
           this.commandId === undefined ||
           this.commandId === ''
         ) {
-          new Notice('Select a command to register');
+          createNotice('Select a command to register');
           return;
         }
 
@@ -907,12 +905,12 @@ export default class LeaderHotkeys extends Plugin {
   public persistKeymaps(newKeymaps: KeyMap[]): void {
     this.saveData(newKeymaps)
       .then(() => {
-        new Notice('Successfully Saved keymaps.');
+        createNotice('Successfully Saved keymaps.');
         this.settings.hotkeys = newKeymaps;
         this.matchHandler.setKeymap(newKeymaps);
       })
       .catch(() => {
-        new Notice('Error while Saving Keymaps.');
+        createNotice('Error while Saving Keymaps.');
       });
   }
 
