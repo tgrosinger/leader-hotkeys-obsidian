@@ -500,10 +500,6 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
     const classification = keyPress.kind();
 
     if (classification === PressKind.ModifierOnly) {
-      this.currentState =
-        this.currentState === MappingState.EmptySequence
-          ? MappingState.EmptySequence
-          : MappingState.WaitingInput;
       return this.currentState;
     }
 
@@ -536,6 +532,7 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
           this.currentState = MappingState.FinishedMapping;
           break;
         default:
+          this.currentSequence.push(previousLiteral);
           break;
       }
     } else {
@@ -657,8 +654,9 @@ class SequenceModal extends Modal {
             backspace,
             '.',
             document.createElement('br'),
-            'If you wanted to complete, press ',
+            'Press ',
             ctrlAltEnter,
+            ' to discard pending changes and complete.',
           );
 
           this.contentEl.append(confirmText);
