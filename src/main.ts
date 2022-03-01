@@ -449,7 +449,7 @@ class MatchHandler {
   }
 
   public setKeymap(keymaps: KeyMap[]): void {
-    this.trie = Trie.from(keymaps);
+    this.trie = Trie.from(keymaps || [] );
     this.machine = new MatchMachine(this.trie);
   }
 
@@ -928,7 +928,7 @@ export default class LeaderHotkeys extends Plugin {
       });
   }
 
-  private async registerEventsAndCallbacks(): Promise<void> {
+  private readonly  registerEventsAndCallbacks = async (): Promise<void> => {
     writeConsole('Registering necessary event callbacks');
 
     const workspaceContainer = this.app.workspace.containerEl;
@@ -952,25 +952,27 @@ export default class LeaderHotkeys extends Plugin {
     writeConsole('Registered open modal command');
   }
 
-  private async loadSavedSettings(): Promise<void> {
+  private readonly  loadSavedSettings = async (): Promise<void> => {
     writeConsole('Loading previously saved settings.');
 
-    const savedSettings = await this.loadData();
+    const savedSettings = await this.loadData() || {};
     try {
-      writeConsole('Successfully loaded previous settings.');
-      savedSettings.hotkeys = this.settings.hotkeys.map(KeyMap.of);
+      writeConsole('Loaded previous settings.');
+      savedSettings.hotkeys = (this.settings.hotkeys || [] ).map(KeyMap.of);
       this.settings = savedSettings;
-      this.matchHandler = new MatchHandler(this);
+
     } catch (Exception) {
-      writeConsole('A failure occured while loading the saved settings.');
-      createNotice('A failure occured while loading the saved settings.');
+      writeConsole('A failure occured while parsing the saved settings.');
+      createNotice('A failure occured while loading the saved settings. Fallbacking to defaults.');
       // todo : Retrocompatibility?
       //  Harder than i thought since LeaderKey isn't saved here.
       //  Would need to keep the old command ,
       //  lookup the binding and convert it to the new one.
 
       this.settings = defaultSettings;
+
     }
+    this.matchHandler = new MatchHandler(this);
   }
 }
 const listCommands = (app: App): ObsidianCommand[] => {
