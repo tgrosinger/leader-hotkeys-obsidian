@@ -171,30 +171,30 @@ enum PressType {
 }
 
 class KeyPress implements Hashable {
-	
+
 	// region static constructors
 	public static ctrl( key: string ): KeyPress {
-		return new KeyPress( key, false, false, true, false  );
+		return new KeyPress( key, false, false, true, false );
 	}
 
 	public static alt( key: string ): KeyPress {
-		return new KeyPress( key, false, true, false, false  );
+		return new KeyPress( key, false, true, false, false );
 	}
 
 	public static shift( key: string ): KeyPress {
-		return new KeyPress( key, true, false, false, false  );
+		return new KeyPress( key, true, false, false, false );
 	}
 
 	public static meta( key: string ): KeyPress {
-		return new KeyPress( key, false, false, false, true  );
+		return new KeyPress( key, false, false, false, true );
 	}
 
 	public static just( key: string ): KeyPress {
-		return new KeyPress( key, false, false, false, false  );
+		return new KeyPress( key, false, false, false, false );
 	}
 
 	public static ctrlAlt( key: string ): KeyPress {
-		return new KeyPress( key, false, true, true, false  );
+		return new KeyPress( key, false, true, true, false );
 	}
 
 	public static fromEvent( event: KeyboardEvent ): KeyPress {
@@ -204,7 +204,7 @@ class KeyPress implements Hashable {
 		const alt   = event.altKey;
 		const meta  = event.metaKey;
 
-		return new KeyPress( key, shift, alt, ctrl, meta  );
+		return new KeyPress( key, shift, alt, ctrl, meta );
 	}
 
 	public static fromCustom( binding: CustomCommand ): KeyPress {
@@ -228,18 +228,6 @@ class KeyPress implements Hashable {
 
 	// endregion
 
-	public static readonly elementRepresentation = ( keyPress: KeyPress ): HTMLElement => {
-		const result = document.createElement( 'kbd' )
-		result.addClass( 'setting-hotkey' )
-		result.setText( keyPress.repr() )
-
-		result.style.padding      = '2px'
-		result.style.margin       = '5px'
-
-		result.style.border       = '1px solid rgba(255,255,255,.25)'
-		result.style.borderRadius = '3px'
-		return result
-	}
 
 	public readonly key: string;
 	public readonly alt: boolean;
@@ -261,7 +249,7 @@ class KeyPress implements Hashable {
 		this.meta  = meta;
 	}
 
-	public readonly repr = (): string => {
+	public readonly text                  = (): string => {
 		const metaRepr  = this.meta ? '⌘ + ' : '';
 		const altRepr   = this.alt ? 'Alt + ' : '';
 		const ctrlRepr  = this.ctrl ? 'Ctrl + ' : '';
@@ -270,9 +258,20 @@ class KeyPress implements Hashable {
 
 		return metaRepr + ctrlRepr + altRepr + shiftRepr + this.key;
 	};
+	public readonly elementRepresentation = (): HTMLElement => {
+		const result = document.createElement( 'kbd' )
+		result.addClass( 'setting-hotkey' )
+		result.setText( this.text() )
+		result.style.padding = '2px'
+		result.style.margin  = '5px'
 
-	public readonly serialize = (): string => {
-		return this.repr();
+		result.style.border       = '1px solid rgba(255,255,255,.25)'
+		result.style.borderRadius = '3px'
+		return result
+
+	}
+	public readonly serialize             = (): string => {
+		return this.text();
 	};
 
 	public readonly classification = (): PressType => {
@@ -320,7 +319,7 @@ class KeyMap implements Iterable<KeyPress> {
 	};
 
 	public sequenceRepr = (): string => {
-		return this.sequence.map( ( key ) => key.repr() ).join( ' => ' );
+		return this.sequence.map( ( key ) => key.text() ).join( ' => ' );
 	};
 }
 
@@ -448,8 +447,9 @@ enum RegisterMachineState {
 	FirstKey,
 	AddedKeys,
 	RetainedKeys,
-	BacktrackedKey,
+	DeletedKey,
 	PendingConfirmation,
+	PendingDeletion,
 	FinishedRegistering,
 }
 
@@ -480,7 +480,7 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 
 			case RegisterMachineState.FirstKey:
 			case RegisterMachineState.RetainedKeys:
-			case RegisterMachineState.BacktrackedKey:
+			case RegisterMachineState.DeletedKey:
 			case RegisterMachineState.AddedKeys:
 				if ( classification === PressType.NoKey ) {
 					this.currentState = RegisterMachineState.RetainedKeys;
@@ -501,7 +501,7 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 					this.currentState = RegisterMachineState.AddedKeys;
 				} else if ( event.key === 'Backspace' ) {
 					this.currentSequence.pop();
-					this.currentState = RegisterMachineState.BacktrackedKey;
+					this.currentState = RegisterMachineState.DeletedKey;
 				} else {
 					this.currentState = RegisterMachineState.PendingConfirmation;
 				}
@@ -518,11 +518,8 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
 		return this.currentSequence;
 	};
 	public readonly documentRepresentation = (): HTMLElement[] => {
-		return this.presses().map( KeyPress.elementRepresentation )
+		return this.presses().map( press => press.elementRepresentation() )
 	}
-	public readonly stringRepresentation   = (): string => {
-		return this.presses().map( KeyPress.elementRepresentation ).join( ' => ' );
-	};
 
 	private readonly reset = (): void => {
 		this.currentState    = RegisterMachineState.NoKeys;
@@ -557,48 +554,58 @@ class KeymapRegisterer extends Modal {
 	};
 
 	private readonly handleKeyDown = ( event: KeyboardEvent ): void => {
+
+		event.preventDefault();
 		const keyPress      = KeyPress.fromEvent( event );
 		const registerState = this.registerMachine.advance( keyPress );
+		writeConsole( `An keypress resulted in ${ RegisterMachineState[ registerState ] } state.`, );
+
+
 		switch ( registerState ) {
 			case RegisterMachineState.NoKeys:
 			case RegisterMachineState.RetainedKeys:
 			case RegisterMachineState.FirstKey:
-			case RegisterMachineState.BacktrackedKey:
+			case RegisterMachineState.DeletedKey:
 			case RegisterMachineState.AddedKeys:
-				event.preventDefault();
-				writeConsole( `An keypress resulted in ${ RegisterMachineState[ registerState ] } state.`, );
 				this.renderKeyPresses( this.registerMachine.documentRepresentation() );
 				return;
+
+				case RegisterMachineState.PendingDeletion:
 			case RegisterMachineState.PendingConfirmation:
-				event.preventDefault();
 			{
-				writeConsole(
-					'An keypress resulted in a PendingConfirmation state. Showing confirmation text.',
-				);
 				// Inplace mutation :(
-				const elements = this.registerMachine.documentRepresentation()
-				const lastElement = elements[ elements.length - 1 ];
-				lastElement.style.border = '1px solid rgba(255, 0, 0, 0.5)';
+				const elements           = this.registerMachine.documentRepresentation()
+				const lastElement        = elements[ elements.length - 1 ];				
+				lastElement.style.opacity = '0.5'
 				this.renderKeyPresses( elements );
 
-				// todo: Prettify.
+
+
+
+
+				const backspace    = KeyPress.just( 'Backspace' ).elementRepresentation()
+				const enter        = KeyPress.just( 'Enter' ).elementRepresentation()
+				const ctrlAltEnter = KeyPress.ctrlAlt( 'Enter' ).elementRepresentation()
+				const pressLiteral = lastElement.cloneNode( true )
+				pressLiteral.style.opacity = '1'
+				
 				const confirmText = document.createElement( 'p' );
-				const presses     = this.registerMachine.presses()
-				const lastKey     = presses[ presses.length - 1 ];
-				confirmText.setText(
-					`Did you mean literal ${ lastKey.repr() }?. If so, Press Enter. 
-              If not, discard it with Backspace. If you wanted to finish, press Ctrl + Alt + Enter`,
-				);
+				confirmText.append( 'Did you mean literal ', pressLiteral, '?',
+									document.createElement('br'),
+									'If so, press ', enter, '.',
+									document.createElement('br'),
+									'If not, discard it with ', backspace, '.',
+									document.createElement('br'),
+									'If you wanted to complete, press ', ctrlAltEnter )
+
+
 				this.contentEl.append( confirmText );
 			}
 				return;
 
 			case RegisterMachineState.FinishedRegistering:
-				event.preventDefault();
-				writeConsole( 'An keypress resulted in a FinishedRegistering state.' );
-
 				const keyPresses = [ ...this.registerMachine.presses() ];
-				const conflicts  = this.parent.conflicts( keyPresses );
+				const conflicts = this.parent.conflicts( keyPresses );
 				if ( conflicts.length > 0 ) {
 					this.setText(
 						'This sequence conflicts with other sequences [ . . . ] . Please try again.',
@@ -804,7 +811,7 @@ class LeaderSettingsTab extends PluginSettingTab {
 		const keySetter = document.createElement( 'div' );
 		keySetter.addClass( 'setting-hotkey' );
 
-		const kbds = thisKeymap.sequence.map( KeyPress.elementRepresentation)
+		const kbds = thisKeymap.sequence.map( press => press.elementRepresentation() )
 		keySetter.append( ...kbds );
 
 		keySetter.addEventListener( 'click', ( e: Event ) =>
@@ -884,7 +891,7 @@ export default class LeaderHotkeys extends Plugin {
 		switch ( currentState ) {
 			case MatchMachineState.NoMatch:
 
-				writeConsole( `An keypress resulted in a ${ MatchMachineState[currentState]} state.`)
+				writeConsole( `An keypress resulted in a ${ MatchMachineState[ currentState ] } state.` )
 				return
 
 			case MatchMachineState.RetainedMatch:
@@ -892,12 +899,12 @@ export default class LeaderHotkeys extends Plugin {
 			case MatchMachineState.InvalidMatch:
 			case MatchMachineState.ImprovedMatch:
 				event.preventDefault();
-				writeConsole( `An keypress resulted in a ${ MatchMachineState[currentState]} state.`)
+				writeConsole( `An keypress resulted in a ${ MatchMachineState[ currentState ] } state.` )
 				return;
 
 			case MatchMachineState.SuccessMatch:
 				event.preventDefault();
-				writeConsole( `An keypress resulted in a ${ MatchMachineState[currentState]} state.`)
+				writeConsole( `An keypress resulted in a ${ MatchMachineState[ currentState ] } state.` )
 				const keymap = this.matcher.fullMatch();
 				this.invoke( keymap );
 				return;
