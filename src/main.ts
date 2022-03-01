@@ -518,12 +518,13 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
           this.currentSequence.pop();
           this.currentState = RegisterMachineState.DeletedKey;
         } else {
+			// Explicitly don't change the state.
           this.currentState = this.currentState;
         }
         return this.currentState;
 
       case RegisterMachineState.FinishedRegistering: {
-        this.reset();
+        this.currentState = RegisterMachineState.ContinuingMatching;
         return this.advance(event);
       }
     }
@@ -536,10 +537,6 @@ class RegisterMachine implements StateMachine<KeyPress, RegisterMachineState> {
     return this.presses().map((press) => press.elementRepresentation());
   };
 
-  private readonly reset = (): void => {
-    this.currentState = RegisterMachineState.NoKeys;
-    this.currentSequence = [];
-  };
 }
 
 class KeymapRegisterer extends Modal {
@@ -582,41 +579,6 @@ class KeymapRegisterer extends Modal {
         return;
 
       case RegisterMachineState.PendingDeletion:
-        {
-          // Inplace mutation :(
-          const elements = this.registerMachine.documentRepresentation();
-          const lastElement = elements[elements.length - 1];
-          lastElement.style.opacity = '0.5';
-          this.renderKeyPresses(elements);
-
-          const backspace = KeyPress.just('Backspace').elementRepresentation();
-          const enter = KeyPress.just('Enter').elementRepresentation();
-          const ctrlAltEnter =
-            KeyPress.ctrlAlt('Enter').elementRepresentation();
-          const pressLiteral = lastElement.cloneNode(true);
-          pressLiteral.style.opacity = '1';
-
-          const confirmText = document.createElement('p');
-          confirmText.append(
-            'Did you mean literal ',
-            pressLiteral,
-            '?',
-            document.createElement('br'),
-            'If so, press ',
-            enter,
-            '.',
-            document.createElement('br'),
-            'If not, discard it with ',
-            backspace,
-            '.',
-            document.createElement('br'),
-            'If you wanted to complete, press ',
-            ctrlAltEnter,
-          );
-
-          this.contentEl.append(confirmText);
-        }
-        return;
       case RegisterMachineState.PendingAddition:
         {
           // Inplace mutation :(
@@ -627,28 +589,24 @@ class KeymapRegisterer extends Modal {
 
           const backspace = KeyPress.just('Backspace').elementRepresentation();
           const enter = KeyPress.just('Enter').elementRepresentation();
-          const ctrlAltEnter =
-            KeyPress.ctrlAlt('Enter').elementRepresentation();
+          const ctrlAltEnter = KeyPress.ctrlAlt('Enter').elementRepresentation();
           const pressLiteral = lastElement.cloneNode(true);
           pressLiteral.style.opacity = '1';
 
-          const confirmText = document.createElement('p');
-          confirmText.append(
-            'Did you mean literal ',
-            pressLiteral,
-            '?',
-            document.createElement('br'),
-            'If so, press ',
-            enter,
-            '.',
-            document.createElement('br'),
-            'If not, discard it with ',
-            backspace,
-            '.',
-            document.createElement('br'),
-            'If you wanted to complete, press ',
-            ctrlAltEnter,
-          );
+		  const discardOrRemoveWith = registerState === RegisterMachineState.PendingAddition
+									 ? 'If not, discard it with '
+									 : 'You can remove previous mapping it with '
+
+		  const confirmText = document.createElement('p');
+		  confirmText.append(
+				'Did you mean literal ', pressLiteral, '?',
+				document.createElement('br'),
+				'If so, press ', enter, '.',
+				document.createElement('br'),
+				discardOrRemoveWith, backspace, '.',
+				document.createElement('br'),
+				'If you wanted to complete, press ', ctrlAltEnter,
+			)
 
           this.contentEl.append(confirmText);
         }
@@ -657,10 +615,9 @@ class KeymapRegisterer extends Modal {
       case RegisterMachineState.FinishedRegistering:
         const keyPresses = [...this.registerMachine.presses()];
         const conflicts = this.parent.conflicts(keyPresses);
-        if (conflicts.length > 0) {
-          this.setText(
-            'This sequence conflicts with other sequences [ . . . ] . Please try again.',
-          );
+        if (conflicts.length >= 1) {
+			// todo handle this properly
+				new Notice("There are conflicts with your keyPresses!")
         } else {
           const keymap = new KeyMap(this.commandId, keyPresses);
           this.parent.addKeymap(keymap);
@@ -690,9 +647,7 @@ class KeymapRegisterer extends Modal {
     this.contentEl.appendChild(introText);
   };
 
-  private readonly setText = (text: string): void => {
-    this.renderKeyPresses(text);
-  };
+
 }
 
 // endregion
