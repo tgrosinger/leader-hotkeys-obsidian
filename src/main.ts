@@ -174,27 +174,27 @@ class KeyPress implements Hashable {
 	
 	// region static constructors
 	public static ctrl( key: string ): KeyPress {
-		return new KeyPress( key, false, false, true, false );
+		return new KeyPress( key, false, false, true, false  );
 	}
 
 	public static alt( key: string ): KeyPress {
-		return new KeyPress( key, false, true, false, false );
+		return new KeyPress( key, false, true, false, false  );
 	}
 
 	public static shift( key: string ): KeyPress {
-		return new KeyPress( key, true, false, false, false );
+		return new KeyPress( key, true, false, false, false  );
 	}
 
 	public static meta( key: string ): KeyPress {
-		return new KeyPress( key, false, false, false, true );
+		return new KeyPress( key, false, false, false, true  );
 	}
 
 	public static just( key: string ): KeyPress {
-		return new KeyPress( key, false, false, false, false );
+		return new KeyPress( key, false, false, false, false  );
 	}
 
 	public static ctrlAlt( key: string ): KeyPress {
-		return new KeyPress( key, false, true, true, false );
+		return new KeyPress( key, false, true, true, false  );
 	}
 
 	public static fromEvent( event: KeyboardEvent ): KeyPress {
@@ -203,7 +203,8 @@ class KeyPress implements Hashable {
 		const ctrl  = event.ctrlKey;
 		const alt   = event.altKey;
 		const meta  = event.metaKey;
-		return new KeyPress( key, shift, alt, ctrl, meta );
+
+		return new KeyPress( key, shift, alt, ctrl, meta  );
 	}
 
 	public static fromCustom( binding: CustomCommand ): KeyPress {
@@ -266,6 +267,7 @@ class KeyPress implements Hashable {
 		const ctrlRepr  = this.ctrl ? 'Ctrl + ' : '';
 		const shiftRepr = this.shift ? '⇧ + ' : '';
 
+
 		return metaRepr + ctrlRepr + altRepr + shiftRepr + this.key;
 	};
 
@@ -280,7 +282,8 @@ class KeyPress implements Hashable {
 			this.key === 'Alt' ||
 			this.key === 'Control' ||
 			this.key === 'Shift' ||
-			this.key === 'Meta'
+			this.key === 'Meta' ||
+			this.key === 'AltGraph'
 		) {
 			return PressType.NoKey;
 		}
@@ -554,6 +557,7 @@ class KeymapRegisterer extends Modal {
 	};
 
 	private readonly handleKeyDown = ( event: KeyboardEvent ): void => {
+		console.log( event );
 		const keyPress      = KeyPress.fromEvent( event );
 		const registerState = this.registerMachine.advance( keyPress );
 		switch ( registerState ) {
