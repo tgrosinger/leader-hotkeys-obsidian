@@ -1,4 +1,4 @@
-import { App, Keymap, Modal, Plugin, PluginSettingTab, Scope, Setting } from 'obsidian';
+import { App, Keymap, Modal, Notice, Plugin, PluginSettingTab, Scope, Setting } from 'obsidian';
 
 // region  Type Shims
 interface ObsidianCommand {
@@ -553,16 +553,17 @@ class KeymapRegisterer extends Modal {
     const registerState = this.registerMachine.advance(keyPress);
     switch (registerState) {
       case RegisterMachineState.NoKeys:
-        writeConsole('An keypress resulted in a NoKeys state. ');
         event.preventDefault();
+        writeConsole('An keypress resulted in a NoKeys state. ');
         this.setText('Waiting for keypress');
         return;
 
       case RegisterMachineState.RetainedKeys:
+        event.preventDefault();
         writeConsole(
           'An keypress resulted in a RetainedKeys state. Awaiting further keypresses.',
         );
-        event.preventDefault();
+
         return;
 
       case RegisterMachineState.FirstKey:
@@ -603,9 +604,11 @@ class KeymapRegisterer extends Modal {
 
           // todo: Prettify.
           const confirmText = document.createElement('p');
+          const presses = this.registerMachine.presses()
+          const lastKey = presses[presses.length - 1];
           confirmText.setText(
-            'Did you mean literal "lastKey"?. If so, Press Enter.' +
-              'If not, discard it with Backspace. If you wanted to finish, press Ctrl + Alt + Enter',
+              `Did you mean literal ${ lastKey.repr()}?. If so, Press Enter. 
+              If not, discard it with Backspace. If you wanted to finish, press Ctrl + Alt + Enter`,
           );
           this.contentEl.append(confirmText);
         }
@@ -617,7 +620,7 @@ class KeymapRegisterer extends Modal {
 
         const keyPresses = [...this.registerMachine.presses()];
         const conflicts = this.parent.conflicts(keyPresses);
-
+        console.log( conflicts );
         if (conflicts.length > 0) {
           this.setText(
             'This sequence conflicts with other sequences [ . . . ] . Please try again.',
@@ -625,6 +628,7 @@ class KeymapRegisterer extends Modal {
         } else {
           const keymap = new KeyMap(this.commandId, keyPresses);
           this.parent.addKeymap(keymap);
+          new Notice( `Command  ${ this.commandId } can now be invoked by ${ keymap.sequenceRepr() }`);
           this.close();
         }
     }
@@ -650,7 +654,10 @@ class CommandModal extends Modal {
   }
 
   public onOpen(): void {
+
+
     const setting = new Setting(this.contentEl);
+
     setting.addDropdown((dropdown) => {
       dropdown.selectEl.addClass('leader-hotkeys-command');
 
@@ -658,20 +665,35 @@ class CommandModal extends Modal {
         dropdown.addOption(command.id, command.name);
       }
 
+      const placeHolder = new Option( 'Select a Command' , 'placeholder' , true);
+      placeHolder.setAttribute('disabled', 'true');
+      placeHolder.setAttribute('selected', 'true');
+      placeHolder.setAttribute('hidden', 'true');
+      dropdown.selectEl.append( placeHolder )
+
+      dropdown.setValue('placeholder')
       dropdown.onChange((selectedId) => {
         this.commandId = selectedId;
       });
+      dropdown.selectEl.focus()
+
     });
 
     setting.addButton((button) => {
       button.setButtonText('OK');
       button.onClick(() => {
-        // todo if this.commandId is undefined ...
 
+        if ( this.commandId === null || this.commandId === undefined || this.commandId === ''  ) {
+          new Notice('Select a command to register');
+          return;
+        }
+        
         const registerer = new KeymapRegisterer(this.parent, this.commandId);
         registerer.open();
         this.close();
+
       });
+
     });
   }
 }
@@ -684,11 +706,10 @@ class LeaderSettingsTab extends PluginSettingTab {
     super(plugin.app, plugin);
     this.plugin = plugin;
     this.app = plugin.app;
-    this.commands = listCommands( this.app)
   }
 
   public display(): void {
-    this.commands = listCommands(this.app);
+    this.refreshCommands()
 
     const containerEl = this.containerEl;
     containerEl.empty();
@@ -794,7 +815,7 @@ class LeaderSettingsTab extends PluginSettingTab {
 
     const appendText = document.createElement('span');
     appendText.addClass('leader-hotkeys-setting-append-text');
-    appendText.setText(' = ');
+    appendText.setText('to');
     settingControl.insertBefore(appendText, settingControl.children[1]);
   }
 
@@ -843,9 +864,11 @@ export default class LeaderHotkeys extends Plugin {
     this.settings.hotkeys = keymaps;
     this.saveData(this.settings)
       .then(() => {
+        new Notice( 'Successfully Saved keymaps.');
         // todo notify
       })
       .catch(() => {
+        new Notice( 'Error while Saving Keymaps.');
         //	todo notify
       });
 
@@ -929,8 +952,9 @@ export default class LeaderHotkeys extends Plugin {
       id: 'register-modal' ,
       name: 'Open Register Modal',
       callback: () => {
+
         this.settingsTab.refreshCommands()
-        new CommandModal( this.settingsTab).open()
+        new CommandModal( this.settingsTab ).open()
         //	need something here.
       },
     };
