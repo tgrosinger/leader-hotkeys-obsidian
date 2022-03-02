@@ -351,7 +351,7 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
 
     this.currentSequence.push(keypress);
     const bestMatch = this.trie.bestMatch(this.currentSequence);
-    const matchKind = classifyMatch(bestMatch);
+    const matchKind = interpretMatch(bestMatch);
     this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
 
     switch (matchKind) {
@@ -368,8 +368,8 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
       case MatchKind.FullMatch:
         this.currentState = wasAlreadySearching
           ? MatchState.SuccessMatch
-          : // Very sus to reach success state at first try.
-            MatchState.SuccessMatch;
+           // Very sus to reach success state at first try.
+          : MatchState.SuccessMatch;
         break;
     }
 
@@ -553,7 +553,7 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
     return this.currentState;
   };
 
-  public readonly presses = (): readonly KeyPress[] => {
+  public readonly presses = (): KeyPress[] => {
     return this.currentSequence;
   };
   public readonly documentRepresentation = (): HTMLElement[] => {
@@ -585,16 +585,19 @@ class SequenceModal extends Modal {
   private readonly parent: LeaderSettingsTab;
   private readonly registerMachine: MappingMachine;
   private readonly commandId: string;
+  private currentSequence: KeyPress[]
 
   constructor(parent: LeaderSettingsTab, commandId: string) {
     super(parent.app);
     this.parent = parent;
     this.commandId = commandId;
     this.registerMachine = new MappingMachine();
+    this.currentSequence = []
   }
 
   public readonly onOpen = (): void => {
-    this.renderKeyPresses(this.registerMachine.documentRepresentation());
+    this.renderContent(this.registerMachine.documentRepresentation());
+
     document.addEventListener('keydown', this.handleKeyDown);
   };
 
@@ -607,9 +610,9 @@ class SequenceModal extends Modal {
     event.preventDefault();
     const keyPress = KeyPress.fromEvent(event);
     const registerState = this.registerMachine.advance(keyPress);
-    writeConsole(
-      `An keypress resulted in ${MappingState[registerState]} state.`,
-    );
+    this.currentSequence = this.registerMachine.presses()
+
+    writeConsole( `An keypress resulted in ${MappingState[registerState]} state.`, );
 
     switch (registerState) {
       case MappingState.EmptySequence:
@@ -617,86 +620,122 @@ class SequenceModal extends Modal {
       case MappingState.FirstKey:
       case MappingState.DeletedKey:
       case MappingState.AddedKeys:
-        this.renderKeyPresses(this.registerMachine.documentRepresentation());
+        this.renderNormally()
         return;
 
       case MappingState.PendingDeletion:
       case MappingState.PendingAddition:
-        {
-          // Inplace mutation :(
-          const elements = this.registerMachine.documentRepresentation();
-          const lastElement = elements[elements.length - 1];
-          lastElement.style.opacity = '0.5';
-          this.renderKeyPresses(elements);
-
-          const backspace = KeyPress.just('Backspace').kbd();
-          const enter = KeyPress.just('Enter').kbd();
-          const ctrlAltEnter = KeyPress.ctrlAlt('Enter').kbd();
-          const pressLiteral = lastElement.cloneNode(true) as HTMLElement;
-          pressLiteral.style.opacity = '1';
-
-          const discardOrRemoveWith =
-            registerState === MappingState.PendingAddition
-              ? 'If not, discard it with '
-              : 'You can remove previous mapping it with ';
-
-          const confirmText = document.createElement('p');
-          confirmText.append(
-            'Did you mean literal ',
-            pressLiteral,
-            '?',
-            document.createElement('br'),
-            'If so, press ',
-            enter,
-            '.',
-            document.createElement('br'),
-            discardOrRemoveWith,
-            backspace,
-            '.',
-            document.createElement('br'),
-            'Press ',
-            ctrlAltEnter,
-            ' to discard pending changes and complete.',
-          );
-
-          this.contentEl.append(confirmText);
-        }
+          this.renderPending( registerState )
         return;
 
       case MappingState.FinishedMapping:
-        const keyPresses = [...this.registerMachine.presses()];
-        const conflicts = this.parent.conflicts(keyPresses);
-        if (conflicts.length >= 1) {
-          // todo handle this properly
-          createNotice('There are conflicts with your keyPresses!');
-        } else {
-          const newKeyMap = new KeyMap(this.commandId, keyPresses);
-          this.parent.addKeymap(newKeyMap);
-          const sequenceRepr = newKeyMap.sequence
-            .map((key) => key.text())
-            .join(' => ');
-          createNotice(`Command  ${this.commandId}
-           can now be invoked by ${sequenceRepr}`);
-          this.close();
-        }
+        this.saveSequence()
+        return;
     }
   };
 
-  private readonly renderKeyPresses = (elements: HTMLElement[]): void => {
+  private readonly renderContent = (inKeySequence: HTMLElement[] , inAdditionalContent?: HTMLElement[]): void => {
+    const elements = inKeySequence || [ ]
+    const additionalContent = inAdditionalContent || []
     this.contentEl.empty();
 
-    const header = document.createElement('p');
-    header.setText(`Registering for ${this.commandId}`);
+
+
+    const command = document.createElement( 'kbd')
+    command.setText( this.commandId)
+
+    const header = document.createElement('h3');
+    header.setText('Adding keymap for command ')
+    header.appendChild( command )
+
 
     const introText = document.createElement('div');
     introText.addClass('setting-hotkey');
     introText.style.overflow = 'auto';
-    introText.append(...elements);
-    // introText.appendChild( k )
+    
+    if (elements.length === 0) {
+
+      const prompt = document.createElement('span')
+      prompt.setText('Waiting for keyboard input.')
+      introText.appendChild( prompt)
+    }
+    else {
+      introText.append(...elements);
+    }
+    
+
 
     this.contentEl.appendChild(header);
     this.contentEl.appendChild(introText);
+    if ( additionalContent ) {
+      this.contentEl.append( ...additionalContent)
+    }
+    new Setting( this.contentEl).addButton( ( button) => {
+      button.setButtonText('Save')
+      button.onClick( () => {
+        this.saveSequence()
+      })
+    })
   };
+  private readonly  saveSequence = (): void => {
+    const conflicts = this.parent.conflicts(this.currentSequence);
+    if (conflicts.length >= 1) {
+      // todo handle this properly
+      createNotice('There are conflicts with your keyPresses!');
+    } else {
+      const newKeyMap = new KeyMap(this.commandId, this.currentSequence);
+      this.parent.addKeymap(newKeyMap);
+      const sequenceRepr = newKeyMap.sequence
+          .map((key) => key.text())
+          .join(' => ');
+      createNotice(`Command  ${this.commandId}
+           can now be invoked by ${sequenceRepr}`);
+      this.close();
+    }
+
+
+  }
+  private readonly renderNormally = (): void => {
+    this.renderContent( this.registerMachine.documentRepresentation() )
+  }
+  private readonly renderPending  = ( mappingState : MappingState ) : void => {
+      // Inplace mutation :(
+      const elements = this.registerMachine.documentRepresentation();
+      const lastElement = elements[elements.length - 1];
+      lastElement.style.opacity = '0.5';
+
+
+      const enter = KeyPress.just('Enter').kbd();
+      enter.style.borderColor = 'green'
+      const backspace = KeyPress.just('Backspace').kbd();
+      backspace.style.borderColor = 'red'
+
+    const ctrlAltEnter = KeyPress.ctrlAlt('Enter').kbd();
+      const pressLiteral = lastElement.cloneNode(true) as HTMLElement;
+      pressLiteral.style.opacity = '1';
+
+      const discardOrRemoves =
+                mappingState === MappingState.PendingAddition
+                ? ' will discard this input.'
+                : ' will delete the previous input.';
+
+      const confirmText = document.createElement('p');
+      confirmText.append(
+          'Did you mean literal ',
+          pressLiteral,
+          '?',
+          document.createElement('br'),
+          enter,
+          ' will add it to the sequence.',
+          document.createElement('br'),
+          backspace,
+          discardOrRemoves,
+          document.createElement('br'),
+          ctrlAltEnter,
+          ' will discard pending changes and complete.',
+      );
+      this.renderContent(elements , [confirmText]);
+  }
 }
 
 class CommandModal extends Modal {
@@ -709,6 +748,9 @@ class CommandModal extends Modal {
   }
 
   public onOpen(): void {
+    const title = document.createElement('h3' )
+    title.setText('Leader Hotkeys: pick a command to create a keymap.')
+    this.contentEl.appendChild( title )
     const setting = new Setting(this.contentEl);
 
     setting.addDropdown((dropdown) => {
@@ -937,10 +979,8 @@ export default class LeaderHotkeys extends Plugin {
     writeConsole('Registering necessary event callbacks');
 
     const workspaceContainer = this.app.workspace.containerEl;
-    this.registerDomEvent(
-      workspaceContainer,
-      'keydown',
-      this.matchHandler.handleKeyDown,
+    this.registerDomEvent( workspaceContainer,
+      'keydown', this.matchHandler.handleKeyDown,
     );
     writeConsole('Registered workspace "keydown" event callbacks.');
 
@@ -950,7 +990,6 @@ export default class LeaderHotkeys extends Plugin {
       callback: () => {
         this.settingsTab.refreshCommands();
         new CommandModal(this.settingsTab).open();
-        //	need something here.
       },
     };
     this.addCommand(openModalCommand);
@@ -962,9 +1001,9 @@ export default class LeaderHotkeys extends Plugin {
 
     const savedSettings = (await this.loadData()) || {};
     try {
-      writeConsole('Loaded previous settings.');
       savedSettings.hotkeys = (savedSettings.hotkeys || []).map(KeyMap.of);
       this.settings = savedSettings;
+      writeConsole('Loaded previous settings.');
     } catch (err) {
       writeConsole('A failure occured while parsing the saved settings.');
       createNotice(
@@ -988,7 +1027,7 @@ const listCommands = (app: App): ObsidianCommand[] => {
   const commands = anyApp.commands.commands as CommandMap;
   return Object.values(commands);
 };
-const classifyMatch = (bestMatch: Optional<TrieNode<KeyMap>>): MatchKind => {
+const interpretMatch = (bestMatch: Optional<TrieNode<KeyMap>>): MatchKind => {
   if (!bestMatch) {
     return MatchKind.NoMatch;
   }
