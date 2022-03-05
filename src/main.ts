@@ -330,14 +330,8 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
   }
 
   public advance = (keypress: KeyPress): MatchState => {
-    if (keypress.kind() === PressKind.ModifierOnly) {
-      this.currentState =
-        this.currentState === MatchState.EmptyMatch
-          ? MatchState.EmptyMatch
-          : MatchState.RetainedMatch;
 
-      return this.currentState;
-    }
+
 
     const macroState = this.stateKind();
     const wasAlreadySearching = macroState === MatchStateKind.Flow;
@@ -348,6 +342,13 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
       this.currentMatches = [];
       return this.advance(keypress);
     }
+    if (keypress.kind() === PressKind.ModifierOnly) {
+      this.currentState = [MatchState.EmptyMatch , MatchState.InvalidMatch , MatchState.SuccessMatch].includes( this.currentState)
+                          ? MatchState.EmptyMatch
+                          : MatchState.RetainedMatch;
+
+      return this.currentState;
+    }
 
     this.currentSequence.push(keypress);
     const bestMatch = this.trie.bestMatch(this.currentSequence);
@@ -356,6 +357,7 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
 
     switch (matchKind) {
       case MatchKind.NoMatch:
+        this.currentSequence = []
         this.currentState = wasAlreadySearching
           ? MatchState.InvalidMatch
           : MatchState.EmptyMatch;
@@ -371,6 +373,7 @@ class MatchMachine implements StateMachine<KeyPress, MatchState> {
           : // Very sus to reach success state at first try.
             MatchState.SuccessMatch;
         break;
+
     }
 
     return this.currentState;
@@ -427,6 +430,7 @@ class MatchHandler {
 
   public readonly handleKeyDown = (event: KeyboardEvent): void => {
     const keypress = KeyPress.fromEvent(event);
+    console.log( keypress );
     const machineState = this.machine.advance(keypress);
     writeConsole(
       `An keypress resulted in a ${MatchState[machineState]} state.`,
@@ -466,8 +470,8 @@ class MatchHandler {
 
 // endregion
 
-// region Mapping of new keymaps
-enum MappingState {
+// region Recording of new keymaps
+enum RecordingState {
   EmptySequence,
   FirstKey,
   AddedKeys,
@@ -486,31 +490,31 @@ enum PendingChoice {
   Unknown,
 }
 
-class MappingMachine implements StateMachine<KeyPress, MappingState> {
-  private currentState: MappingState;
+class RecordingMachine implements StateMachine<KeyPress, RecordingState> {
+  private currentState: RecordingState;
   private readonly currentSequence: KeyPress[];
 
   constructor() {
-    this.currentState = MappingState.EmptySequence;
+    this.currentState = RecordingState.EmptySequence;
     this.currentSequence = [];
   }
 
-  public readonly advance = (keyPress: KeyPress): MappingState => {
+  public readonly advance = (keyPress: KeyPress): RecordingState => {
     const classification = keyPress.kind();
 
     if (classification === PressKind.ModifierOnly) {
       return this.currentState;
     }
 
-    if (this.currentState === MappingState.FinishedMapping) {
+    if ( this.currentState === RecordingState.FinishedMapping) {
       // Explicitly state that it can be re-started without loss.
-      this.currentState = MappingState.WaitingInput;
+      this.currentState = RecordingState.WaitingInput;
       return this.advance(keyPress);
     }
 
     if (
-      this.currentState === MappingState.PendingAddition ||
-      this.currentState === MappingState.PendingDeletion
+        this.currentState === RecordingState.PendingAddition ||
+        this.currentState === RecordingState.PendingDeletion
     ) {
       const previousLiteral = this.currentSequence.pop();
       const action = this.interpretAction(keyPress);
@@ -518,17 +522,17 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
       switch (action) {
         case PendingChoice.KeepLiteral:
           this.currentSequence.push(previousLiteral);
-          this.currentState = MappingState.AddedKeys;
+          this.currentState = RecordingState.AddedKeys;
           break;
         case PendingChoice.DiscardLiteral:
-          this.currentState = MappingState.WaitingInput;
+          this.currentState = RecordingState.WaitingInput;
           break;
         case PendingChoice.DeletePrevious:
           this.currentSequence.pop();
-          this.currentState = MappingState.DeletedKey;
+          this.currentState = RecordingState.DeletedKey;
           break;
         case PendingChoice.Finish:
-          this.currentState = MappingState.FinishedMapping;
+          this.currentState = RecordingState.FinishedMapping;
           break;
         default:
           this.currentSequence.push(previousLiteral);
@@ -539,13 +543,13 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
       if (classification === PressKind.SpecialKey) {
         this.currentState =
           keyPress.key === 'Enter'
-            ? MappingState.PendingAddition
-            : MappingState.PendingDeletion;
+            ? RecordingState.PendingAddition
+            : RecordingState.PendingDeletion;
       } else {
         this.currentState =
           this.currentSequence.length === 1
-            ? MappingState.FirstKey
-            : MappingState.AddedKeys;
+            ? RecordingState.FirstKey
+            : RecordingState.AddedKeys;
       }
     }
 
@@ -566,13 +570,13 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
     if (keypress.key === 'Enter') {
       return PendingChoice.KeepLiteral;
     } else if (
-      keypress.key === 'Backspace' &&
-      this.currentState === MappingState.PendingDeletion
+        keypress.key === 'Backspace' &&
+        this.currentState === RecordingState.PendingDeletion
     ) {
       return PendingChoice.DeletePrevious;
     } else if (
-      keypress.key === 'Backspace' &&
-      this.currentState === MappingState.PendingAddition
+        keypress.key === 'Backspace' &&
+        this.currentState === RecordingState.PendingAddition
     ) {
       return PendingChoice.DiscardLiteral;
     }
@@ -580,9 +584,9 @@ class MappingMachine implements StateMachine<KeyPress, MappingState> {
   }
 }
 
-class SequenceModal extends Modal {
+class RecordingModal extends Modal {
   private readonly parent: LeaderSettingsTab;
-  private readonly registerMachine: MappingMachine;
+  private readonly registerMachine: RecordingMachine;
   private readonly commandId: string;
   private currentSequence: KeyPress[];
 
@@ -590,7 +594,7 @@ class SequenceModal extends Modal {
     super(parent.app);
     this.parent = parent;
     this.commandId = commandId;
-    this.registerMachine = new MappingMachine();
+    this.registerMachine = new RecordingMachine();
     this.currentSequence = [];
   }
 
@@ -612,24 +616,24 @@ class SequenceModal extends Modal {
     this.currentSequence = this.registerMachine.presses();
 
     writeConsole(
-      `An keypress resulted in ${MappingState[registerState]} state.`,
+      `An keypress resulted in ${RecordingState[registerState]} state.`,
     );
 
     switch (registerState) {
-      case MappingState.EmptySequence:
-      case MappingState.WaitingInput:
-      case MappingState.FirstKey:
-      case MappingState.DeletedKey:
-      case MappingState.AddedKeys:
+      case RecordingState.EmptySequence:
+      case RecordingState.WaitingInput:
+      case RecordingState.FirstKey:
+      case RecordingState.DeletedKey:
+      case RecordingState.AddedKeys:
         this.renderNormally();
         return;
 
-      case MappingState.PendingDeletion:
-      case MappingState.PendingAddition:
+      case RecordingState.PendingDeletion:
+      case RecordingState.PendingAddition:
         this.renderPending(registerState);
         return;
 
-      case MappingState.FinishedMapping:
+      case RecordingState.FinishedMapping:
         this.saveSequence();
         return;
     }
@@ -693,7 +697,7 @@ class SequenceModal extends Modal {
   private readonly renderNormally = (): void => {
     this.renderContent(this.registerMachine.documentRepresentation());
   };
-  private readonly renderPending = (mappingState: MappingState): void => {
+  private readonly renderPending = (mappingState: RecordingState): void => {
     // Inplace mutation :(
     const elements = this.registerMachine.documentRepresentation();
     const lastElement = elements[elements.length - 1];
@@ -709,7 +713,7 @@ class SequenceModal extends Modal {
     pressLiteral.style.opacity = '1';
 
     const discardOrRemoves =
-      mappingState === MappingState.PendingAddition
+              mappingState === RecordingState.PendingAddition
         ? ' will discard this input.'
         : ' will delete the previous input.';
 
@@ -779,7 +783,7 @@ class CommandModal extends Modal {
           return;
         }
 
-        const registerer = new SequenceModal(this.parent, this.commandId);
+        const registerer = new RecordingModal(this.parent, this.commandId);
         registerer.open();
         this.close();
       });
@@ -904,7 +908,7 @@ class LeaderSettingsTab extends PluginSettingTab {
     keySetter.append(...kbds);
 
     keySetter.addEventListener('click', (_: Event) =>
-      new SequenceModal(this, thisKeymap.commandID).open(),
+      new RecordingModal(this, thisKeymap.commandID).open(),
     );
 
     settingControl.insertBefore(keySetter, settingControl.children[0]);
