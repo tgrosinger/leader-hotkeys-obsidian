@@ -1,5 +1,7 @@
 # Leader Hotkeys for Obsidian
 
+**Note:** The 0.2.0 release will require reconfiguring your hotkeys. The configuration is now greatly revamped and significantly more useful. Sorry for the inconvenience.
+
 Use a leader key when assigning a hotkey to a command. Works with any command
 in Obsidian, even those added by other plugins!
 
