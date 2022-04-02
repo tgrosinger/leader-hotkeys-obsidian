@@ -75,7 +75,7 @@ module.exports = {
     "@typescript-eslint/prefer-function-type": "error",
     "@typescript-eslint/prefer-readonly": "error",
     "@typescript-eslint/quotes": ["error", "single", { avoidEscape: true }],
-    "arrow-body-style": ["error", "as-needed"],
+    "arrow-body-style": "off",
     "babel/no-invalid-this": "error",
     "constructor-super": "error",
     curly: ["error", "multi-line"],

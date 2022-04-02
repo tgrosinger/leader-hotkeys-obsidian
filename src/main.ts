@@ -7,479 +7,1065 @@ import {
   Setting,
 } from 'obsidian';
 
-interface Command {
-  name: string;
+// region  Type Shims
+interface ObsidianCommand {
+  callback: () => void;
+  icon: string;
   id: string;
+  name: string;
 }
 
-class Hotkey {
-  public key: string;
-  public meta: boolean;
-  public shift: boolean;
-  public commandID: string;
+interface CommandMap {
+  [key: string]: ObsidianCommand;
 }
 
-interface Settings {
-  hotkeys: Hotkey[];
+interface CustomCommand {
+  key: string;
+  modifiers: string[];
 }
 
-const defaultHotkeys: Hotkey[] = [
-  { key: 'h', meta: false, shift: false, commandID: 'editor:focus-left' },
-  { key: 'j', meta: false, shift: false, commandID: 'editor:focus-bottom' },
-  { key: 'k', meta: false, shift: false, commandID: 'editor:focus-top' },
-  { key: 'l', meta: false, shift: false, commandID: 'editor:focus-right' },
-];
+type Optional<T> = T | undefined | null;
 
-export default class LeaderHotkeysPlugin extends Plugin {
-  public settings: Settings;
+interface StateMachine<K, T> {
+  // Would love to restrict T to a finite set ( T extends Enum ),
+  // but it's not possible to do that in TypeScript currently
+  advance: (event: K) => T;
+}
 
-  private leaderPending: boolean;
-  private cmEditors: CodeMirror.Editor[];
+// endregion
 
-  public async onload(): Promise<void> {
-    this.settings = {
-      hotkeys: defaultHotkeys,
-      ...(await this.loadData()),
-    };
+// region Fundamental Domain
+enum PressKind {
+  ModifierOnly,
+  SpecialKey,
+  NormalKey,
+}
 
-    this.cmEditors = [];
-    this.registerEvent(
-      this.app.workspace.on('codemirror', (cm: CodeMirror.Editor) => {
-        this.cmEditors.push(cm);
-        cm.on('keydown', this.handleKeyDown);
-      }),
+interface Hashable {
+  asHash(): string;
+}
+
+class KeyPress implements Hashable {
+  // region static constructors
+  public static ctrl(key: string): KeyPress {
+    return new KeyPress(key, false, false, true, false);
+  }
+
+  public static alt(key: string): KeyPress {
+    return new KeyPress(key, false, true, false, false);
+  }
+
+  public static shift(key: string): KeyPress {
+    return new KeyPress(key, true, false, false, false);
+  }
+
+  public static meta(key: string): KeyPress {
+    return new KeyPress(key, false, false, false, true);
+  }
+
+  public static just(key: string): KeyPress {
+    return new KeyPress(key, false, false, false, false);
+  }
+
+  public static ctrlAlt(key: string): KeyPress {
+    return new KeyPress(key, false, true, true, false);
+  }
+
+  public static fromEvent(event: KeyboardEvent): KeyPress {
+    const key = event.key;
+    const shift = event.shiftKey;
+    const ctrl = event.ctrlKey;
+    const alt = event.altKey;
+    const meta = event.metaKey;
+
+    return new KeyPress(key, shift, alt, ctrl, meta);
+  }
+
+  public static fromCustom(binding: CustomCommand): KeyPress {
+    const modifiers = binding.modifiers;
+
+    const key = binding.key;
+    const shift = modifiers.contains('Shift');
+    const ctrl = modifiers.contains('Ctrl');
+    const alt = modifiers.contains('Alt');
+    const meta = modifiers.contains('Meta');
+    return new KeyPress(key, shift, ctrl, alt, meta);
+  }
+
+  public static of(keyPressLike: KeyPress): KeyPress {
+    return new KeyPress(
+      keyPressLike.key,
+      keyPressLike.shift,
+      keyPressLike.alt,
+      keyPressLike.ctrl,
+      keyPressLike.meta,
     );
-
-    this.addCommand({
-      id: 'leader',
-      name: 'Leader key',
-      callback: () => {
-        console.debug('Leader pressed...');
-        this.leaderPending = true;
-      },
-    });
-
-    this.addSettingTab(new LeaderPluginSettingsTab(this.app, this));
   }
 
-  public onunload(): void {
-    this.cmEditors.forEach((cm) => {
-      cm.off('keydown', this.handleKeyDown);
-    });
+  // endregion
+
+  public readonly key: string;
+  public readonly alt: boolean;
+  public readonly ctrl: boolean;
+  public readonly shift: boolean;
+  public readonly meta: boolean;
+
+  public constructor(
+    key: string,
+    shift: boolean,
+    alt: boolean,
+    ctrl: boolean,
+    meta: boolean,
+  ) {
+    this.key = key;
+    this.shift = shift;
+    this.alt = alt;
+    this.ctrl = ctrl;
+    this.meta = meta;
   }
 
-  private readonly handleKeyDown = (
-    cm: CodeMirror.Editor,
-    event: KeyboardEvent,
-  ): void => {
-    if (!this.leaderPending) {
-      return;
+  public readonly text = (): string => {
+    const metaRepr = this.meta ? '⌘ + ' : '';
+    const altRepr = this.alt ? 'Alt + ' : '';
+    const ctrlRepr = this.ctrl ? 'Ctrl + ' : '';
+    const shiftRepr = this.shift ? '⇧ + ' : '';
+
+    return metaRepr + ctrlRepr + altRepr + shiftRepr + this.key;
+  };
+  public readonly kbd = (): HTMLElement => {
+    const result = document.createElement('kbd');
+    result.addClass('setting-hotkey');
+    result.setText(this.text());
+    result.style.padding = '2px';
+    result.style.margin = '5px';
+    result.style.border = '1px solid rgba(255,255,255,.25)';
+    result.style.borderRadius = '3px';
+    return result;
+  };
+  public readonly asHash = (): string => {
+    return this.text();
+  };
+
+  public readonly kind = (): PressKind => {
+    if (
+      this.key === null ||
+      this.key === undefined ||
+      ['Alt', 'Control', 'Shift', 'Meta', 'AltGraph'].includes(this.key)
+    ) {
+      return PressKind.ModifierOnly;
+    }
+    if (['Enter', 'Escape', 'Backspace'].includes(this.key)) {
+      return PressKind.SpecialKey;
     }
 
-    if (event.key === 'Shift' || event.key === 'Meta') {
-      // Don't clear leaderPending for a meta key
-      console.debug('skipping a meta key');
-      return;
-    }
-
-    let commandFound = false;
-    for (let i = 0; i < this.settings.hotkeys.length; i++) {
-      const evaluatingHotkey = this.settings.hotkeys[i];
-      if (evaluatingHotkey.key === event.key) {
-        if (
-          // check true and false to catch commands with meta/shift undefined
-          ((event.metaKey && evaluatingHotkey.meta) ||
-            (!event.metaKey && !evaluatingHotkey.meta)) &&
-          ((event.shiftKey && evaluatingHotkey.shift) ||
-            (!event.shiftKey && !evaluatingHotkey.shift))
-        ) {
-          (this.app as any).commands.executeCommandById(
-            this.settings.hotkeys[i].commandID,
-          );
-          event.preventDefault();
-          commandFound = true;
-          break;
-        }
-      }
-    }
-
-    if (!commandFound) {
-      console.debug('cancelling leader');
-    }
-
-    this.leaderPending = false;
+    return PressKind.NormalKey;
   };
 }
 
-class SetHotkeyModal extends Modal {
-  private readonly currentLeader: string;
-  private readonly redraw: () => void;
-  private readonly setNewKey: (
-    key: string,
-    meta: boolean,
-    shift: boolean,
-  ) => void;
+class KeyMap implements Iterable<KeyPress> {
+  public static of(keyMapLike: KeyMap): KeyMap {
+    // FIXME : Theoretically possible to create a keymap without a commandID.
 
-  constructor(
-    app: App,
-    currentLeader: string,
-    redraw: () => void,
-    setNewKey: (newKey: string, meta: boolean, shift: boolean) => void,
-  ) {
-    super(app);
-    this.currentLeader = currentLeader;
-    this.redraw = redraw;
-    this.setNewKey = setNewKey;
+    const sequence = keyMapLike.sequence || [];
+
+    const presses = sequence.map(KeyPress.of);
+    const command = keyMapLike.commandID;
+    return new KeyMap(command, presses);
   }
 
-  public onOpen = (): void => {
-    const { contentEl } = this;
+  public sequence: KeyPress[];
+  public commandID: string;
 
-    const introText = document.createElement('p');
-    introText.setText(
-      `Press a key to use as the hotkey after the leader (${this.currentLeader}) is pressed...`,
+  constructor(commandID: string, sequence: KeyPress[]) {
+    this.sequence = sequence;
+    this.commandID = commandID;
+  }
+
+  public [Symbol.iterator](): Iterator<KeyPress> {
+    return this.sequence.values();
+  }
+
+  public text = (): string => {
+    return (
+      this.commandID +
+      ' = ' +
+      this.sequence.map((press) => press.text()).join(' => ')
+    );
+  };
+}
+
+interface KeyBinding {
+  hotkeys: KeyMap[];
+}
+
+// endregion
+
+// region Matching of existing keymaps
+interface HashIter extends Iterable<Hashable> {}
+
+class TrieNode<T> {
+  public children = new Map<string, TrieNode<T>>();
+
+  public value: Optional<T>;
+
+  public child(key: string): Optional<TrieNode<T>> {
+    return this.children.get(key);
+  }
+
+  public addChild(key: string, child: TrieNode<T>): void {
+    this.value = null;
+    this.children.set(key, child);
+  }
+
+  public leaves(): TrieNode<T>[] {
+    if (this.isLeaf()) {
+      return [this];
+    }
+
+    let result: TrieNode<T>[] = [];
+
+    this.children.forEach((child, _) => {
+      result = result.concat(child.leaves());
+    });
+
+    return result;
+  }
+
+  public leafValues(): T[] {
+    return this.leaves().map((node) => node.value);
+  }
+
+  public isLeaf(): boolean {
+    return this.children.size === 0;
+  }
+
+  public setValue(value: T): void {
+    this.value = value;
+  }
+}
+
+class Trie<T extends HashIter> {
+  public static from<K extends HashIter>(iter: K[]): Trie<K> {
+    const trie = new Trie<K>();
+    trie.addAll(iter);
+    return trie;
+  }
+
+  private readonly root: TrieNode<T>;
+
+  constructor() {
+    this.root = new TrieNode();
+  }
+
+  public addAll(iter: T[]): Trie<T> {
+    for (const item of iter) {
+      this.add(item);
+    }
+    return this;
+  }
+
+  public add(composite: T): Trie<T> {
+    // FIXME : Honestly, very sus implementation
+    let lastSeenNode = this.root;
+    for (const component of composite) {
+      const key = component.asHash();
+      const child = lastSeenNode.child(key) || new TrieNode();
+      lastSeenNode.addChild(key, child);
+      lastSeenNode = child;
+    }
+    if (lastSeenNode.value !== undefined) {
+      throw new Error('Duplicate keymap');
+    }
+    lastSeenNode.setValue(composite);
+    return this;
+  }
+
+  public bestMatch(sequence: Hashable[]): Optional<TrieNode<T>> {
+    let lastNode = this.root;
+    for (const keyPress of sequence) {
+      const key = keyPress.asHash();
+      const child = lastNode.child(key);
+      if (!child) {
+        return null;
+      }
+      lastNode = child;
+    }
+
+    return lastNode;
+  }
+}
+
+enum MatchKind {
+  NoMatch,
+  PartialMatch,
+  FullMatch,
+}
+
+enum MatchState {
+  EmptyMatch,
+  StartedMatch,
+  RetainedMatch,
+  ImprovedMatch,
+  SuccessMatch,
+  InvalidMatch,
+}
+
+enum MatchStateKind {
+  Initial,
+  Flow,
+  Terminal,
+}
+
+class MatchMachine implements StateMachine<KeyPress, MatchState> {
+  private readonly trie: Trie<KeyMap>;
+  private currentState: MatchState;
+  private currentSequence: KeyPress[];
+  private currentMatches: KeyMap[];
+
+  constructor(trie: Trie<KeyMap>) {
+    this.trie = trie;
+    this.currentState = MatchState.EmptyMatch;
+    this.currentSequence = [];
+    this.currentMatches = [];
+  }
+
+  public advance = (keypress: KeyPress): MatchState => {
+
+
+
+    const macroState = this.stateKind();
+    const wasAlreadySearching = macroState === MatchStateKind.Flow;
+    if (macroState === MatchStateKind.Terminal) {
+      // Reset and try again.
+      this.currentState = MatchState.EmptyMatch;
+      this.currentSequence = [];
+      this.currentMatches = [];
+      return this.advance(keypress);
+    }
+    if (keypress.kind() === PressKind.ModifierOnly) {
+      this.currentState = [MatchState.EmptyMatch , MatchState.InvalidMatch , MatchState.SuccessMatch].includes( this.currentState)
+                          ? MatchState.EmptyMatch
+                          : MatchState.RetainedMatch;
+
+      return this.currentState;
+    }
+
+    this.currentSequence.push(keypress);
+    const bestMatch = this.trie.bestMatch(this.currentSequence);
+    const matchKind = interpretMatch(bestMatch);
+    this.currentMatches = bestMatch ? bestMatch.leafValues() : [];
+
+    switch (matchKind) {
+      case MatchKind.NoMatch:
+        this.currentSequence = []
+        this.currentState = wasAlreadySearching
+          ? MatchState.InvalidMatch
+          : MatchState.EmptyMatch;
+        break;
+      case MatchKind.PartialMatch:
+        this.currentState = wasAlreadySearching
+          ? MatchState.ImprovedMatch
+          : MatchState.StartedMatch;
+        break;
+      case MatchKind.FullMatch:
+        this.currentState = wasAlreadySearching
+          ? MatchState.SuccessMatch
+          : // Very sus to reach success state at first try.
+            MatchState.SuccessMatch;
+        break;
+
+    }
+
+    return this.currentState;
+  };
+
+  public allMatches = (): readonly KeyMap[] => {
+    return this.currentMatches;
+  };
+
+  public fullMatch = (): Optional<KeyMap> => {
+    const numMatches = this.allMatches().length;
+    const isFullMatch = this.currentState === MatchState.SuccessMatch;
+
+    // Sanity checking.
+    if (isFullMatch && numMatches !== 1) {
+      writeConsole(
+        'State Machine in FullMatch state, but availableHotkeys.length contains more than 1 element. This is definitely a bug.',
+      );
+      return null;
+    }
+
+    if (isFullMatch && numMatches === 1) {
+      return this.currentMatches[0];
+    }
+    return null;
+  };
+
+  public stateKind = (): MatchStateKind => {
+    if (this.currentState === MatchState.EmptyMatch) {
+      return MatchStateKind.Initial;
+    }
+
+    const flowStates = [
+      MatchState.StartedMatch,
+      MatchState.RetainedMatch,
+      MatchState.ImprovedMatch,
+    ];
+
+    return flowStates.includes(this.currentState)
+      ? MatchStateKind.Flow
+      : MatchStateKind.Terminal;
+  };
+}
+
+class MatchHandler {
+  private trie: Trie<KeyMap>;
+  private machine: MatchMachine;
+  private readonly parent: LeaderHotkeys;
+
+  public constructor(parent: LeaderHotkeys) {
+    this.parent = parent;
+    this.setKeymap(parent.settings.hotkeys);
+  }
+
+  public readonly handleKeyDown = (event: KeyboardEvent): void => {
+    const keypress = KeyPress.fromEvent(event);
+    console.log( keypress );
+    const machineState = this.machine.advance(keypress);
+    writeConsole(
+      `An keypress resulted in a ${MatchState[machineState]} state.`,
     );
 
-    contentEl.appendChild(introText);
+    if (this.machine.stateKind() !== MatchStateKind.Initial) {
+      event.preventDefault();
+
+      if (machineState === MatchState.SuccessMatch) {
+        const keymap = this.machine.fullMatch();
+        this.emit(keymap);
+      }
+    }
+  };
+
+  public emit(keymap: Optional<KeyMap>): void {
+    if (keymap) {
+      this.parent.invokeCommand(keymap.commandID);
+      return;
+    }
+
+    writeConsole(
+      'Fully matched an prefix, but without a corresponding Keymap. This is definitely a bug.',
+    );
+  }
+
+  public setKeymap(keymaps: KeyMap[]): void {
+    this.trie = Trie.from(keymaps || []);
+    this.machine = new MatchMachine(this.trie);
+  }
+
+  public findMatchingKeymaps(presses: KeyPress[]): KeyMap[] {
+    const matches = this.trie.bestMatch(presses);
+    return matches ? matches.leafValues() : [];
+  }
+}
+
+// endregion
+
+// region Recording of new keymaps
+enum RecordingState {
+  EmptySequence,
+  FirstKey,
+  AddedKeys,
+  WaitingInput,
+  DeletedKey,
+  PendingAddition,
+  PendingDeletion,
+  FinishedMapping,
+}
+
+enum PendingChoice {
+  KeepLiteral,
+  DiscardLiteral,
+  DeletePrevious,
+  Finish,
+  Unknown,
+}
+
+class RecordingMachine implements StateMachine<KeyPress, RecordingState> {
+  private currentState: RecordingState;
+  private readonly currentSequence: KeyPress[];
+
+  constructor() {
+    this.currentState = RecordingState.EmptySequence;
+    this.currentSequence = [];
+  }
+
+  public readonly advance = (keyPress: KeyPress): RecordingState => {
+    const classification = keyPress.kind();
+
+    if (classification === PressKind.ModifierOnly) {
+      return this.currentState;
+    }
+
+    if ( this.currentState === RecordingState.FinishedMapping) {
+      // Explicitly state that it can be re-started without loss.
+      this.currentState = RecordingState.WaitingInput;
+      return this.advance(keyPress);
+    }
+
+    if (
+        this.currentState === RecordingState.PendingAddition ||
+        this.currentState === RecordingState.PendingDeletion
+    ) {
+      const previousLiteral = this.currentSequence.pop();
+      const action = this.interpretAction(keyPress);
+
+      switch (action) {
+        case PendingChoice.KeepLiteral:
+          this.currentSequence.push(previousLiteral);
+          this.currentState = RecordingState.AddedKeys;
+          break;
+        case PendingChoice.DiscardLiteral:
+          this.currentState = RecordingState.WaitingInput;
+          break;
+        case PendingChoice.DeletePrevious:
+          this.currentSequence.pop();
+          this.currentState = RecordingState.DeletedKey;
+          break;
+        case PendingChoice.Finish:
+          this.currentState = RecordingState.FinishedMapping;
+          break;
+        default:
+          this.currentSequence.push(previousLiteral);
+          break;
+      }
+    } else {
+      this.currentSequence.push(keyPress);
+      if (classification === PressKind.SpecialKey) {
+        this.currentState =
+          keyPress.key === 'Enter'
+            ? RecordingState.PendingAddition
+            : RecordingState.PendingDeletion;
+      } else {
+        this.currentState =
+          this.currentSequence.length === 1
+            ? RecordingState.FirstKey
+            : RecordingState.AddedKeys;
+      }
+    }
+
+    return this.currentState;
+  };
+
+  public readonly presses = (): KeyPress[] => {
+    return this.currentSequence;
+  };
+  public readonly documentRepresentation = (): HTMLElement[] => {
+    return this.presses().map((press) => press.kbd());
+  };
+
+  private interpretAction(keypress: KeyPress): PendingChoice {
+    if (keypress.ctrl && keypress.alt && keypress.key === 'Enter') {
+      return PendingChoice.Finish;
+    }
+    if (keypress.key === 'Enter') {
+      return PendingChoice.KeepLiteral;
+    } else if (
+        keypress.key === 'Backspace' &&
+        this.currentState === RecordingState.PendingDeletion
+    ) {
+      return PendingChoice.DeletePrevious;
+    } else if (
+        keypress.key === 'Backspace' &&
+        this.currentState === RecordingState.PendingAddition
+    ) {
+      return PendingChoice.DiscardLiteral;
+    }
+    return PendingChoice.Unknown;
+  }
+}
+
+class RecordingModal extends Modal {
+  private readonly parent: LeaderSettingsTab;
+  private readonly registerMachine: RecordingMachine;
+  private readonly commandId: string;
+  private currentSequence: KeyPress[];
+
+  constructor(parent: LeaderSettingsTab, commandId: string) {
+    super(parent.app);
+    this.parent = parent;
+    this.commandId = commandId;
+    this.registerMachine = new RecordingMachine();
+    this.currentSequence = [];
+  }
+
+  public readonly onOpen = (): void => {
+    this.renderContent(this.registerMachine.documentRepresentation());
 
     document.addEventListener('keydown', this.handleKeyDown);
   };
 
-  public onClose = (): void => {
+  public readonly onClose = (): void => {
     document.removeEventListener('keydown', this.handleKeyDown);
-    this.redraw();
-
-    const { contentEl } = this;
-    contentEl.empty();
+    this.parent.display();
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (['Shift', 'Meta', 'Escape'].contains(event.key)) {
-      return;
+    event.preventDefault();
+    const keyPress = KeyPress.fromEvent(event);
+    const registerState = this.registerMachine.advance(keyPress);
+    this.currentSequence = this.registerMachine.presses();
+
+    writeConsole(
+      `An keypress resulted in ${RecordingState[registerState]} state.`,
+    );
+
+    switch (registerState) {
+      case RecordingState.EmptySequence:
+      case RecordingState.WaitingInput:
+      case RecordingState.FirstKey:
+      case RecordingState.DeletedKey:
+      case RecordingState.AddedKeys:
+        this.renderNormally();
+        return;
+
+      case RecordingState.PendingDeletion:
+      case RecordingState.PendingAddition:
+        this.renderPending(registerState);
+        return;
+
+      case RecordingState.FinishedMapping:
+        this.saveSequence();
+        return;
+    }
+  };
+
+  private readonly renderContent = (
+    inKeySequence: HTMLElement[],
+    inAdditionalContent?: HTMLElement[],
+  ): void => {
+    const elements = inKeySequence || [];
+    const additionalContent = inAdditionalContent || [];
+    this.contentEl.empty();
+
+    const command = document.createElement('kbd');
+    command.setText(this.commandId);
+    const header = document.createElement('h3');
+    header.setText('Adding keymap for command ');
+    header.appendChild(command);
+
+    const introText = document.createElement('div');
+    introText.addClass('setting-hotkey');
+    introText.style.overflow = 'auto';
+    if (elements.length === 0) {
+      const prompt = document.createElement('span');
+      prompt.setText('Waiting for keyboard input.');
+      introText.appendChild(prompt);
+    } else {
+      introText.append(...elements);
     }
 
-    this.setNewKey(event.key, event.metaKey, event.shiftKey);
-    this.close();
+    this.contentEl.appendChild(header);
+    this.contentEl.appendChild(introText);
+    if (additionalContent) {
+      this.contentEl.append(...additionalContent);
+    }
+    new Setting(this.contentEl).addButton((button) => {
+      button.setButtonText('Save');
+      button.onClick(() => {
+        this.saveSequence();
+      });
+    });
+  };
+
+  private readonly saveSequence = (): void => {
+    const conflicts = this.parent.conflicts(this.currentSequence);
+    if (conflicts.length >= 1) {
+      // todo handle this properly
+      createNotice('There are conflicts with your keyPresses!');
+    } else {
+      const newKeyMap = new KeyMap(this.commandId, this.currentSequence);
+      this.parent.addKeymap(newKeyMap);
+      const sequenceRepr = newKeyMap.sequence
+        .map((key) => key.text())
+        .join(' => ');
+      createNotice(`Command  ${this.commandId}
+           can now be invoked by ${sequenceRepr}`);
+      this.close();
+    }
+  };
+
+  private readonly renderNormally = (): void => {
+    this.renderContent(this.registerMachine.documentRepresentation());
+  };
+  private readonly renderPending = (mappingState: RecordingState): void => {
+    // Inplace mutation :(
+    const elements = this.registerMachine.documentRepresentation();
+    const lastElement = elements[elements.length - 1];
+    lastElement.style.opacity = '0.5';
+
+    const enter = KeyPress.just('Enter').kbd();
+    enter.style.borderColor = 'green';
+    const backspace = KeyPress.just('Backspace').kbd();
+    backspace.style.borderColor = 'red';
+
+    const ctrlAltEnter = KeyPress.ctrlAlt('Enter').kbd();
+    const pressLiteral = lastElement.cloneNode(true) as HTMLElement;
+    pressLiteral.style.opacity = '1';
+
+    const discardOrRemoves =
+              mappingState === RecordingState.PendingAddition
+        ? ' will discard this input.'
+        : ' will delete the previous input.';
+
+    const confirmText = document.createElement('p');
+    confirmText.append(
+      'Did you mean literal ',
+      pressLiteral,
+      '?',
+      document.createElement('br'),
+      enter,
+      ' will add it to the sequence.',
+      document.createElement('br'),
+      backspace,
+      discardOrRemoves,
+      document.createElement('br'),
+      ctrlAltEnter,
+      ' will discard pending changes and complete.',
+    );
+    this.renderContent(elements, [confirmText]);
   };
 }
 
-class LeaderPluginSettingsTab extends PluginSettingTab {
-  private readonly plugin: LeaderHotkeysPlugin;
-  private commands: Command[];
+class CommandModal extends Modal {
+  private readonly parent: LeaderSettingsTab;
+  private commandId: string;
 
-  private tempNewHotkey: Hotkey;
+  constructor(parent: LeaderSettingsTab) {
+    super(parent.app);
+    this.parent = parent;
+  }
 
-  constructor(app: App, plugin: LeaderHotkeysPlugin) {
-    super(app, plugin);
+  public onOpen(): void {
+    const title = document.createElement('h3');
+    title.setText('Leader Hotkeys: pick a command to create a keymap.');
+    this.contentEl.appendChild(title);
+    const setting = new Setting(this.contentEl);
+
+    setting.addDropdown((dropdown) => {
+      dropdown.selectEl.addClass('leader-hotkeys-command');
+
+      for (const command of this.parent.obsidianCommands()) {
+        dropdown.addOption(command.id, command.name);
+      }
+
+      const placeHolder = new Option('Select a Command', 'placeholder', true);
+      placeHolder.setAttribute('disabled', 'true');
+      placeHolder.setAttribute('selected', 'true');
+      placeHolder.setAttribute('hidden', 'true');
+      dropdown.selectEl.append(placeHolder);
+
+      dropdown.setValue('placeholder');
+      dropdown.onChange((selectedId) => {
+        this.commandId = selectedId;
+      });
+      dropdown.selectEl.focus();
+    });
+
+    setting.addButton((button) => {
+      button.setButtonText('OK');
+      button.onClick(() => {
+        if (
+          this.commandId === null ||
+          this.commandId === undefined ||
+          this.commandId === ''
+        ) {
+          createNotice('Select a command to register');
+          return;
+        }
+
+        const registerer = new RecordingModal(this.parent, this.commandId);
+        registerer.open();
+        this.close();
+      });
+    });
+  }
+}
+
+// endregion
+
+class LeaderSettingsTab extends PluginSettingTab {
+  public commands: ObsidianCommand[];
+  private readonly plugin: LeaderHotkeys;
+
+  constructor(plugin: LeaderHotkeys) {
+    super(plugin.app, plugin);
     this.plugin = plugin;
+    this.app = plugin.app;
   }
 
   public display(): void {
-    this.commands = this.generateCommandList(this.app);
-    const { containerEl } = this;
+    this.refreshCommands();
+
+    const containerEl = this.containerEl;
     containerEl.empty();
-
-    const currentLeader = this.lookupCurrentLeader(this.app);
-
     containerEl.createEl('h2', { text: 'Leader Hotkeys Plugin - Settings' });
 
-    containerEl.createEl('p', {
-      text:
-        'The leader-hotkeys listed below are used by pressing a custom ' +
-        'hotkey (called the leader), then releasing and pressing the key ' +
-        'defined for a particular command. The leader hotkey can be ' +
-        'configured in the Hotkeys settings page, and is currently bound to ' +
-        currentLeader +
-        '.',
-    });
-
     containerEl.createEl('h3', { text: 'Existing Hotkeys' });
+    for (let i = 0; i < this.currentKeymaps().length; i++) {
+      this.displayExisting(i);
+    }
 
-    this.plugin.settings.hotkeys.forEach((configuredCommand) => {
-      const setting = new Setting(containerEl)
-        .addDropdown((dropdown) => {
-          this.commands.forEach((command) => {
-            dropdown.addOption(command.id, command.name);
-          });
-          dropdown
-            .setValue(configuredCommand.commandID)
-            .onChange((newCommand) => {
-              this.updateHotkeyCommandInSettings(configuredCommand, newCommand);
-            });
-          dropdown.selectEl.addClass('leader-hotkeys-command');
-        })
-        .addExtraButton((button) => {
-          button
-            .setIcon('cross')
-            .setTooltip('Delete shortcut')
-            .onClick(() => {
-              this.deleteHotkeyFromSettings(configuredCommand);
-              this.display();
-            });
-          button.extraSettingsEl.addClass('leader-hotkeys-delete');
-        });
-
-      setting.infoEl.remove();
-      const settingControl = setting.settingEl.children[0];
-
-      const prependText = document.createElement('span');
-      prependText.addClass('leader-hotkeys-setting-prepend-text');
-      prependText.setText(`Use ${currentLeader} followed by`);
-      settingControl.insertBefore(prependText, settingControl.children[0]);
-
-      const keySetter = document.createElement('kbd');
-      keySetter.addClass('setting-hotkey');
-      keySetter.setText(hotkeyToName(configuredCommand));
-      keySetter.addEventListener('click', (e: Event) => {
-        new SetHotkeyModal(
-          this.app,
-          currentLeader,
-          () => {
-            this.display();
-          },
-          (newKey: string, meta: boolean, shift: boolean) => {
-            const isValid = this.validateNewHotkey(newKey, meta, shift);
-            if (isValid) {
-              this.updateHotkeyInSettings(
-                configuredCommand,
-                newKey,
-                meta,
-                shift,
-              );
-            }
-          },
-        ).open();
+    new Setting(containerEl).addButton((button) => {
+      button.setButtonText('New Keymap').onClick(() => {
+        new CommandModal(this).open();
       });
-      settingControl.insertBefore(keySetter, settingControl.children[1]);
-
-      const appendText = document.createElement('span');
-      appendText.addClass('leader-hotkeys-setting-append-text');
-      appendText.setText('to');
-      settingControl.insertBefore(appendText, settingControl.children[2]);
     });
+  }
 
-    containerEl.createEl('h3', { text: 'Create New Hotkey' });
+  public refreshCommands(): void {
+    this.commands = listCommands(this.app);
+  }
 
-    const newHotkeySetting = new Setting(containerEl).addDropdown(
-      (dropdown) => {
-        dropdown.addOption('invalid-placeholder', 'Select a Command');
-        this.commands.forEach((command) => {
-          dropdown.addOption(command.id, command.name);
-        });
-        dropdown.onChange((newCommand) => {
-          if (this.tempNewHotkey === undefined) {
-            this.tempNewHotkey = newEmptyHotkey();
-          }
-          this.tempNewHotkey.commandID = newCommand;
-        });
-        dropdown.selectEl.addClass('leader-hotkeys-command');
-      },
+  public conflicts(keyPresses: KeyPress[]): KeyMap[] {
+    // todo validate properly
+    return this.plugin.findMatchingKeymaps(keyPresses) || [];
+  }
+
+  public obsidianCommands(): ObsidianCommand[] {
+    return this.commands;
+  }
+
+  public addKeymap(keymap: KeyMap): void {
+    writeConsole(`Adding keymap: ${keymap.text()}`);
+
+    const newHotkeys = [...this.currentKeymaps()].concat(keymap);
+
+    this.saveKeymap(newHotkeys);
+  }
+
+  public removeKeymap(positionId: number): void {
+    const currentHotkeys = this.currentKeymaps();
+    const toRemove = currentHotkeys[positionId];
+    writeConsole(`Removing keymap: ${toRemove.text()}`);
+
+    const newKeymap = [];
+    for (let i = 0; i < currentHotkeys.length; i++) {
+      if (i !== positionId) {
+        newKeymap.push(currentHotkeys[i]);
+      }
+    }
+
+    this.saveKeymap(newKeymap);
+  }
+
+  public updateKeymap(positionId: number, keyMap: KeyMap): void {
+    writeConsole(`Updating keymap at position ${positionId}: ${keyMap.text()}`);
+    const keyMaps = [...this.currentKeymaps()];
+    keyMaps[positionId] = keyMap;
+    this.saveKeymap(keyMaps);
+  }
+
+  private saveKeymap(keymaps: KeyMap[]): void {
+    this.plugin.persistKeymaps(keymaps);
+  }
+
+  private displayExisting(positionId: number): void {
+    const containerEl = this.containerEl;
+    const thisKeymap = this.currentKeymaps()[positionId];
+
+    const setting = new Setting(containerEl);
+    setting.addDropdown((dropdown) => {
+      for (const command of this.commands) {
+        dropdown.addOption(command.id, command.name);
+      }
+      dropdown.onChange((newCommand) => {
+        const newKeyMap = KeyMap.of(thisKeymap);
+        newKeyMap.commandID = newCommand;
+        this.updateKeymap(positionId, newKeyMap);
+      });
+
+      dropdown.setValue(thisKeymap.commandID);
+      dropdown.selectEl.addClass('leader-hotkeys-command');
+    });
+    setting.addExtraButton((button) => {
+      button
+        .setIcon('cross')
+        .setTooltip('Delete shortcut')
+        .extraSettingsEl.addClass('leader-hotkeys-delete');
+
+      button.onClick(() => {
+        this.removeKeymap(positionId);
+        this.display();
+      });
+    });
+    setting.infoEl.remove();
+    const settingControl = setting.settingEl.children[0];
+
+    const keySetter = document.createElement('div');
+    keySetter.addClass('setting-hotkey');
+
+    const kbds = thisKeymap.sequence.map((press) => press.kbd());
+    keySetter.append(...kbds);
+
+    keySetter.addEventListener('click', (_: Event) =>
+      new RecordingModal(this, thisKeymap.commandID).open(),
     );
 
-    newHotkeySetting.infoEl.remove();
-    const settingControl = newHotkeySetting.settingEl.children[0];
-
-    const prependText = document.createElement('span');
-    prependText.addClass('leader-hotkeys-setting-prepend-text');
-    prependText.setText(`Use ${currentLeader} followed by`);
-    settingControl.insertBefore(prependText, settingControl.children[0]);
-
-    const keySetter = document.createElement('kbd');
-    keySetter.addClass('setting-hotkey');
-    keySetter.setText(hotkeyToName(this.tempNewHotkey));
-    keySetter.addEventListener('click', (e: Event) => {
-      new SetHotkeyModal(
-        this.app,
-        currentLeader,
-        () => {
-          this.display();
-        },
-        (newKey: string, meta: boolean, shift: boolean) => {
-          if (this.tempNewHotkey === undefined) {
-            this.tempNewHotkey = newEmptyHotkey();
-          }
-          this.tempNewHotkey.key = newKey;
-          this.tempNewHotkey.meta = meta;
-          this.tempNewHotkey.shift = shift;
-        },
-      ).open();
-    });
-    settingControl.insertBefore(keySetter, settingControl.children[1]);
+    settingControl.insertBefore(keySetter, settingControl.children[0]);
 
     const appendText = document.createElement('span');
     appendText.addClass('leader-hotkeys-setting-append-text');
     appendText.setText('to');
-    settingControl.insertBefore(appendText, settingControl.children[2]);
-
-    new Setting(containerEl).addButton((button) => {
-      button.setButtonText('Save New Hotkey').onClick(() => {
-        const isValid = this.validateNewHotkey(
-          this.tempNewHotkey.key,
-          this.tempNewHotkey.meta,
-          this.tempNewHotkey.shift,
-        );
-        if (isValid) {
-          this.storeNewHotkeyInSettings();
-          this.display();
-        }
-      });
-    });
+    settingControl.insertBefore(appendText, settingControl.children[1]);
   }
 
-  private readonly lookupCurrentLeader = (app: App): string => {
-    const customKeys = (app as any).hotkeyManager.customKeys;
-    if ('leader-hotkeys-obsidian:leader' in customKeys) {
-      return customKeys['leader-hotkeys-obsidian:leader']
-        .map(
-          (hotkey: any): string =>
-            hotkey.modifiers.join('+') + '+' + hotkey.key,
-        )
-        .join(' or ');
+  private currentSettings(): KeyBinding {
+    return this.plugin.settings;
+  }
+
+  private currentKeymaps(): KeyMap[] {
+    return this.currentSettings().hotkeys;
+  }
+}
+
+export default class LeaderHotkeys extends Plugin {
+  public settings: KeyBinding;
+  private settingsTab: LeaderSettingsTab;
+  private matchHandler: MatchHandler;
+
+  public async onload(): Promise<void> {
+    writeConsole('Started Loading.');
+
+    await this.loadSavedSettings();
+    await this.registerEventsAndCallbacks();
+
+    this.settingsTab = new LeaderSettingsTab(this);
+    this.addSettingTab(this.settingsTab);
+    writeConsole('Registered Setting Tab.');
+
+    writeConsole('Finished Loading.');
+  }
+
+  public onunload(): void {
+    writeConsole('Unloading plugin.');
+  }
+
+  public invokeCommand(commandID: string): void {
+    if (commandID) {
+      // todo remove any typing
+      const app = this.app as any;
+      app.commands.executeCommandById(commandID);
     }
+  }
 
-    return 'Mod+b';
-  };
+  public findMatchingKeymaps(presses: KeyPress[]): KeyMap[] {
+    return this.matchHandler.findMatchingKeymaps(presses);
+  }
 
-  private readonly generateCommandList = (app: App): Command[] => {
-    const commands: Command[] = [];
-    for (const [key, value] of Object.entries((app as any).commands.commands)) {
-      commands.push({ name: value.name, id: value.id });
-    }
-    return commands;
-  };
+  public persistKeymaps(newKeymaps: KeyMap[]): void {
+    this.settings.hotkeys = newKeymaps;
+    this.saveData(this.settings)
+      .then(() => {
+        this.matchHandler.setKeymap(newKeymaps);
+      })
+      .catch(() => {
+        createNotice('Error while Saving Keymaps.');
+      });
+  }
 
-  private readonly validateNewHotkey = (
-    key: string,
-    meta: boolean,
-    shift: boolean,
-  ): boolean => {
-    for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
-      const hotkey = this.plugin.settings.hotkeys[i];
-      if (
-        hotkey.key === key &&
-        hotkey.meta === meta &&
-        hotkey.shift === shift
-      ) {
-        const hotkeyName = hotkeyToName(hotkey);
-        new Notice(`Leader hotkey '${hotkeyName}' is already in use`);
-        return false;
-      }
-    }
+  private readonly registerEventsAndCallbacks = async (): Promise<void> => {
+    writeConsole('Registering necessary event callbacks');
 
-    return true;
-  };
-
-  private readonly deleteHotkeyFromSettings = (
-    existingHotkey: Hotkey,
-  ): void => {
-    for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
-      const hotkey = this.plugin.settings.hotkeys[i];
-      if (
-        hotkey.key !== existingHotkey.key ||
-        hotkey.meta !== existingHotkey.meta ||
-        hotkey.shift !== existingHotkey.shift
-      ) {
-        continue;
-      }
-
-      console.debug(
-        `Removing leader-hotkey ${hotkeyToName(existingHotkey)} at index ${i}`,
-      );
-      this.plugin.settings.hotkeys.splice(i, 1);
-    }
-    this.plugin.saveData(this.plugin.settings);
-  };
-
-  private readonly updateHotkeyInSettings = (
-    existingHotkey: Hotkey,
-    newKey: string,
-    meta: boolean,
-    shift: boolean,
-  ): void => {
-    for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
-      const hotkey = this.plugin.settings.hotkeys[i];
-      if (
-        hotkey.key !== existingHotkey.key ||
-        hotkey.meta !== existingHotkey.meta ||
-        hotkey.shift !== existingHotkey.shift
-      ) {
-        continue;
-      }
-
-      console.debug(
-        `Updating leader-hotkey ${hotkeyToName(
-          existingHotkey,
-        )} at index ${i} to ${newKey}`,
-      );
-      hotkey.key = newKey;
-      hotkey.meta = meta;
-      hotkey.shift = shift;
-      break;
-    }
-    this.plugin.saveData(this.plugin.settings);
-  };
-
-  private readonly updateHotkeyCommandInSettings = (
-    existingHotkey: Hotkey,
-    newCommand: string,
-  ): void => {
-    for (let i = 0; i < this.plugin.settings.hotkeys.length; i++) {
-      const hotkey = this.plugin.settings.hotkeys[i];
-      if (
-        hotkey.key !== existingHotkey.key ||
-        hotkey.meta !== existingHotkey.meta ||
-        hotkey.shift !== existingHotkey.shift
-      ) {
-        continue;
-      }
-
-      console.debug(
-        `Updating leader-hotkey command ${hotkeyToName(
-          existingHotkey,
-        )} at index ${i} to ${newCommand}`,
-      );
-      hotkey.commandID = newCommand;
-      break;
-    }
-    this.plugin.saveData(this.plugin.settings);
-  };
-
-  private readonly storeNewHotkeyInSettings = (): void => {
-    console.debug(
-      `Adding leader-hotkey command ${this.tempNewHotkey} to ${this.tempNewHotkey.commandID}`,
+    const workspaceContainer = this.app.workspace.containerEl;
+    this.registerDomEvent(
+      workspaceContainer,
+      'keydown',
+      this.matchHandler.handleKeyDown,
     );
-    this.plugin.settings.hotkeys.push(this.tempNewHotkey);
-    this.plugin.saveData(this.plugin.settings);
-    this.tempNewHotkey = newEmptyHotkey();
+    writeConsole('Registered workspace "keydown" event callbacks.');
+
+    const openModalCommand = {
+      id: 'register-modal',
+      name: 'Open Register Modal',
+      callback: () => {
+        this.settingsTab.refreshCommands();
+        new CommandModal(this.settingsTab).open();
+      },
+    };
+    this.addCommand(openModalCommand);
+    writeConsole('Registered open modal command');
+  };
+
+  private readonly loadSavedSettings = async (): Promise<void> => {
+    writeConsole('Loading previously saved settings.');
+
+    const savedSettings = (await this.loadData()) || {};
+    try {
+      savedSettings.hotkeys = (savedSettings.hotkeys || []).map(KeyMap.of);
+      this.settings = savedSettings;
+      writeConsole('Loaded previous settings.');
+    } catch (err) {
+      writeConsole('A failure occured while parsing the saved settings.');
+      createNotice(
+        'A failure occured while loading the saved settings. Fallbacking to defaults.',
+      );
+      // todo : Retrocompatibility?
+      //  Harder than i thought since LeaderKey isn't saved here.
+      //  Would need to keep the old command ,
+      //  lookup the binding and convert it to the new one.
+
+      this.settings = defaultSettings;
+    }
+    this.matchHandler = new MatchHandler(this);
   };
 }
 
-const newEmptyHotkey = (): Hotkey => ({
-  key: '',
-  shift: false,
-  meta: false,
-  commandID: '',
-});
-
-const hotkeyToName = (hotkey: Hotkey): string => {
-  if (hotkey === undefined || hotkey.key === '') {
-    return '?';
-  }
-  const keyToUse = (() => {
-    switch (hotkey.key) {
-      case 'ArrowRight':
-        return '→';
-      case 'ArrowLeft':
-        return '←';
-      case 'ArrowDown':
-        return '↓';
-      case 'ArrowUp':
-        return '↑';
-      default:
-        return hotkey.key;
-    }
-  })();
-  return (
-    (hotkey.meta ? 'meta+' : '') + (hotkey.shift ? 'shift+' : '') + keyToUse
-  );
+// region consts and utils
+const listCommands = (app: App): ObsidianCommand[] => {
+  // todo remove any type
+  const anyApp = app as any;
+  const commands = anyApp.commands.commands as CommandMap;
+  return Object.values(commands);
 };
+const interpretMatch = (bestMatch: Optional<TrieNode<KeyMap>>): MatchKind => {
+  if (!bestMatch) {
+    return MatchKind.NoMatch;
+  }
+  if (bestMatch.isLeaf()) {
+    return MatchKind.FullMatch;
+  }
+  return MatchKind.PartialMatch;
+};
+const defaultHotkeys: KeyMap[] = [
+  new KeyMap('editor:focus-left', [KeyPress.ctrl('b'), KeyPress.just('h')]),
+  new KeyMap('editor:focus-right', [KeyPress.ctrl('b'), KeyPress.just('l')]),
+  new KeyMap('editor:focus-top', [KeyPress.ctrl('b'), KeyPress.just('k')]),
+  new KeyMap('editor:focus-bottom', [KeyPress.ctrl('b'), KeyPress.just('j')]),
+  new KeyMap('command-palette:open', [
+    KeyPress.ctrl('q'),
+    KeyPress.just('1'),
+    KeyPress.just('2'),
+    KeyPress.just('2'),
+  ]),
+  new KeyMap('command-palette:open', [
+    KeyPress.ctrl(' '),
+    KeyPress.just('p'),
+    KeyPress.just('a'),
+    KeyPress.just('l'),
+    KeyPress.just('l'),
+    KeyPress.just('e'),
+    KeyPress.just('t'),
+    KeyPress.just('t'),
+    KeyPress.just('e'),
+  ]),
+];
+const defaultSettings: KeyBinding = {
+  hotkeys: defaultHotkeys,
+};
+const writeConsole = (message: string): void => {
+  console.debug(` Leader Hotkeys: ${message}`);
+};
+const createNotice = (message: string): void => {
+  new Notice('Leader Hotkeys: ' + message);
+};
+// endregion
