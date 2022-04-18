@@ -30,7 +30,7 @@ From Obsidian v0.9.8+, you can activate this plugin within Obsidian by doing the
 - Open Settings > Third-party plugin
 - Make sure Safe mode is **off**
 - Click Browse community plugins
-- Search for "Advanced Tables"
+- Search for "Leader Hotkeys"
 - Click Install
 - Once installed, close the community plugins window and activate the newly installed plugin
 
