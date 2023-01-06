@@ -430,7 +430,7 @@ class MatchHandler {
 
   public readonly handleKeyDown = (event: KeyboardEvent): void => {
     const keypress = KeyPress.fromEvent(event);
-    console.log( keypress );
+    console.debug( keypress );
     const machineState = this.machine.advance(keypress);
     writeConsole(
       `An keypress resulted in a ${MatchState[machineState]} state.`,
