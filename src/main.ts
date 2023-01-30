@@ -5,6 +5,8 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
+  Workspace,
+  WorkspaceSplit,
 } from 'obsidian';
 
 // region  Type Shims
@@ -30,6 +32,33 @@ interface StateMachine<K, T> {
   // Would love to restrict T to a finite set ( T extends Enum ),
   // but it's not possible to do that in TypeScript currently
   advance: (event: K) => T;
+}
+
+// endregion
+
+// region  Obsidian undocumented type definitions
+/**
+ * The Obsidian workspace, with type definitions for "floating" splits
+ * (multiple windows). Based on testing, the floating splits have the
+ * following properties from an API perspective:
+ *
+ * - Shared `globalThis.app` object with the main OS window. (1)
+ * - Unique Window and Document object for each floating split. (2, 3)
+ *
+ * Observations:
+ *  (1) app.workspace.floatingSplit.children[0].containerEl.doc === document // false
+ *  (2) app.workspace.floatingSplit.children[0].containerEl.win === window   // false
+ *  (3) app.workspace.floatingSplit.children[0].containerEl.win.app === app  // true
+ */
+interface ObsidianWorkspaceWithFloatingSplits extends Workspace {
+  floatingSplit: WorkspaceSplit & {
+    children: Array<WorkspaceSplit & {
+      /**
+       * The container for the floating split.
+       */
+      containerEl: HTMLDivElement
+    }>
+  }
 }
 
 // endregion
@@ -932,9 +961,11 @@ export default class LeaderHotkeys extends Plugin {
   public settings: KeyBinding;
   private settingsTab: LeaderSettingsTab;
   private matchHandler: MatchHandler;
+  private perWorkspaceEventListeners: Array<() => void>;
 
   public async onload(): Promise<void> {
     writeConsole('Started Loading.');
+    this.perWorkspaceEventListeners = [];
 
     await this.loadSavedSettings();
     await this.registerEventsAndCallbacks();
@@ -973,16 +1004,64 @@ export default class LeaderHotkeys extends Plugin {
       });
   }
 
-  private readonly registerEventsAndCallbacks = async (): Promise<void> => {
-    writeConsole('Registering necessary event callbacks');
+  private readonly registerWorkspaceDomEvents = async (): Promise<void> => {
+    // Remove old event listeners.
+    this.perWorkspaceEventListeners.forEach(removeListener => removeListener());
+    this.perWorkspaceEventListeners = [];
 
-    const workspaceContainer = this.app.workspace.containerEl;
-    this.registerDomEvent(
-      workspaceContainer,
-      'keydown',
-      this.matchHandler.handleKeyDown,
-    );
+    // Find all the unique workspace containers.
+    const workspace = this.app.workspace as ObsidianWorkspaceWithFloatingSplits;
+    const workspaceContainers = new Set([
+      workspace.containerEl,
+      ...workspace.floatingSplit.children.map(split => split.containerEl)
+    ]);
+
+    /**
+     * Registers an event listener on all workspace container elements.
+     * This listener will be removed automatically when the plugin unloads, or
+     * when {@link registerWorkspaceDomEvents} is called again.
+     *
+     * @param event The event name.
+     * @param listener The event listener.
+     */
+    const registerWorkspaceDomEvent =
+    <K extends keyof HTMLElementEventMap>(event: K, listener: (evt: HTMLElementEventMap[K]) => void) => {
+      for (const workspaceContainer of workspaceContainers.values()) {
+        workspaceContainer.addEventListener(event, listener);
+        this.perWorkspaceEventListeners.push(() => {
+          workspaceContainer.removeEventListener(event, listener);
+        })
+      }
+    }
+
+    // Register event listeners.
+    // At some point, these might need to be removed due to window closing/opening.
+    writeConsole(`Registering necessary event callbacks for ${workspaceContainers.size} windows`);
+
+    registerWorkspaceDomEvent('keydown', this.matchHandler.handleKeyDown);
     writeConsole('Registered workspace "keydown" event callbacks.');
+
+    const openModalCommand = {
+      id: 'register-modal',
+      name: 'Open Register Modal',
+      callback: () => {
+        this.settingsTab.refreshCommands();
+        new CommandModal(this.settingsTab).open();
+      },
+    };
+    this.addCommand(openModalCommand);
+    writeConsole('Registered open modal command');
+  };
+
+  private readonly registerEventsAndCallbacks = async (): Promise<void> => {
+    this.register(() => {
+      this.perWorkspaceEventListeners.forEach(removeListener => removeListener());
+    })
+    writeConsole('Registered unload event to clear workspace DOM events');
+
+    this.app.workspace.onLayoutReady(this.registerWorkspaceDomEvents)
+    this.app.workspace.on("layout-change", this.registerWorkspaceDomEvents);
+    writeConsole('Registered workspace ready and "layout-change" events');
 
     const openModalCommand = {
       id: 'register-modal',
